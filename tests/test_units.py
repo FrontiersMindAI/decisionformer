@@ -58,8 +58,9 @@ def _write(path, text):
 def test_config_inheritance_overrides_and_validation(tmp_path):
     _write(tmp_path / "base.yaml", "model: {backbone: x, head: {type: option_scoring}}\ntrain: {output_dir: out, lr: 1.0e-3}\n")
     child = _write(tmp_path / "child.yaml", "base: base.yaml\nfinetune: {mode: lora, lora: {r: 8, use_dora: true}}\n")
-    config = load_config(child, ["train.lr=5e-5", "model.attention=bidirectional"])
+    config = load_config(child, ["train.lr=5e-5", "model.attention=bidirectional", "train.mixed_precision=no"])
     assert config.train.lr == 5e-5 and config.model.attention == "bidirectional"
+    assert config.train.mixed_precision == "no"  # YAML 1.1 reads a bare `no` as false
     assert list(config.model.heads) == ["default"] and config.finetune.lora["use_dora"] is True
     with pytest.raises(ValueError, match="extra"):
         load_config(child, ["train.learning_rate=1"])
@@ -231,3 +232,11 @@ def test_head_config_extra_arguments_roundtrip():
 def test_shipped_recipes_validate(recipe):
     config = load_config(recipe)
     assert config.train.output_dir and config.model.heads
+
+
+def test_selection_never_picks_non_finite_metrics():
+    from deciformer.metrics import is_improvement
+
+    assert not is_improvement({"accuracy": 0.9, "nll": float("nan")}, None, "accuracy", "max")
+    assert not is_improvement({"accuracy": 0.9, "nll": float("inf")}, {"accuracy": 0.1, "nll": 1.0}, "accuracy", "max")
+    assert is_improvement({"accuracy": 0.9, "nll": 0.5}, {"accuracy": 0.1, "nll": 1.0}, "accuracy", "max")

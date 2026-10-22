@@ -105,7 +105,13 @@ def satisfies(metrics: dict[str, Any], constraints: Sequence[str]) -> bool:
     return True
 
 
+def all_finite(metrics: dict[str, Any]) -> bool:
+    return all(math.isfinite(v) for v in metrics.values() if isinstance(v, (int, float)) and not isinstance(v, bool))
+
+
 def is_improvement(candidate: dict[str, Any], best: dict[str, Any] | None, metric: str, mode: str) -> bool:
+    if not all_finite(candidate):
+        return False  # a diverged checkpoint (NaN/inf metrics) is never selected
     if best is None:
         return True
     return candidate[metric] > best[metric] if mode == "max" else candidate[metric] < best[metric]

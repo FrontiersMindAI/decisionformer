@@ -164,6 +164,12 @@ class TrainConfig(_Strict):
     find_unused_parameters: bool | Literal["auto"] = "auto"
     drop_last: bool = False
 
+    @field_validator("mixed_precision", mode="before")
+    @classmethod
+    def _yaml_no(cls, value: Any) -> Any:
+        # YAML 1.1 (used by OmegaConf) reads a bare `no` as the boolean false.
+        return "no" if value is False else value
+
 
 class EvalConfig(_Strict):
     at_start: bool = False  # also evaluate before the first update (the step-0 baseline)

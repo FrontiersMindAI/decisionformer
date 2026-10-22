@@ -181,6 +181,11 @@ class Trainer:
                 per_example = decision_loss(logits, batch.targets, batch.option_mask, config.train.loss,
                                             batch.teacher, batch.has_teacher)
                 weighted = (per_example * batch.weights).sum()
+                if not torch.isfinite(weighted):
+                    raise FloatingPointError(
+                        f"Non-finite loss at step {step + 1} (rank {state.rank}); the forward pass overflowed or "
+                        "diverged. Try a lower train.lr, mixed_precision bf16 or no (fp16 has a narrow range), or "
+                        "resume from an earlier checkpoint.")
                 # DDP averages gradients over ranks, so scale by world_size / global examples to get the mean.
                 self.scaler.scale(weighted * state.world_size / plan.global_count).backward()
             loss_sum += float(weighted.detach())
