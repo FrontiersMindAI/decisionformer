@@ -1,0 +1,18 @@
+# 8 GB Turing GPU (RTX 2060 SUPER): fp16 autocast, no bf16 / flash-attention.
+base: ../../base.yaml
+data:
+  train: data/mnli/train.jsonl
+  calibration: data/mnli/calibration_small.jsonl
+  eval: {dev: data/mnli/dev_small.jsonl}
+  max_length: 256
+train:
+  mixed_precision: fp16
+  global_batch_size: 32
+  micro_batch_size: 8
+  epochs: 1
+  log_every: 25
+  save_every: null
+  resume: null
+eval:
+  micro_batch_size: 32
+  at_start: true

@@ -1,0 +1,4 @@
+base: e4_smollm2_bidirectional.yaml
+model:
+  head: {type: fixed_softmax, labels: [entailment, neutral, contradiction], mlp_hidden: 256, dropout: 0.1, pooler: {type: mean}}
+train: {output_dir: runs/b1_bidir_mean_fixed}

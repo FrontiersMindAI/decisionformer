@@ -1,0 +1,5 @@
+base: _base.yaml
+model: {backbone: HuggingFaceTB/SmolLM2-135M-Instruct, head: {type: code_readout}}
+finetune: {mode: lora, lora: {r: 8, lora_alpha: 16, lora_dropout: 0.0}}
+distributed: {backend: gloo}
+train: {output_dir: runs/e8_ddp_gloo_gpu, lr: 2.0e-4, max_steps: 40, save_every: 20, eval_every: 20, shard_optimizer_states: true}

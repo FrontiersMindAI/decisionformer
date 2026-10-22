@@ -1,6 +1,9 @@
 # Step 1 of a bidirectional decoder: masked next-token prediction (LLM2Vec-style) on in-domain text.
 #   deciformer adapt configs/recipes/adapt_mntp.yaml
 # Then train with model.backbone=runs/smollm2-mntp/adapted and model.attention=bidirectional.
+# Budget generously: in docs/benchmarks.md, 150 steps restored the MNTP loss but not task information.
+# Use plenty of in-domain text (more than the decision training set alone), bf16 or fp32, and compare the
+# result against a causal baseline before adopting it.
 base: ../base.yaml
 
 model:
@@ -20,7 +23,7 @@ adapt:
 
 train:
   output_dir: runs/smollm2-mntp
-  max_steps: 1000
+  max_steps: 2000
   global_batch_size: 64
-  lr: 1.0e-4
+  lr: 5.0e-5
   mixed_precision: bf16

@@ -112,9 +112,14 @@ causal never leaks future tokens, bidirectional does see them, prefix behaves as
 changes outputs. Recurrent and linear-attention layers (Mamba, DeltaNet, for example in Qwen3-Next and Qwen3.5)
 are causal by construction, so non-causal modes refuse those models instead of silently doing the wrong thing.
 
-A causally pretrained decoder needs a little adaptation before bidirectional attention pays off. `deciformer
-adapt` runs masked next-token prediction (as in LLM2Vec) and saves a checkpoint you can use as `model.backbone`
-(see `configs/recipes/adapt_mntp.yaml`).
+**Bidirectional decoders need real adaptation.** The mode is verified correct, but making a causally pretrained
+decoder bidirectional removes most of the task information from its features. On MNLI, Qwen3-0.6B's
+linear-probe accuracy fell from 0.68 to 0.44, and bidirectional fine-tuning of SmolLM2-360M stayed at chance
+where the causal model reached 0.80 (`docs/benchmarks.md`). `deciformer adapt` runs masked next-token prediction
+(as in LLM2Vec) and saves a checkpoint you can use as `model.backbone` (`configs/recipes/adapt_mntp.yaml`), but a
+short stage of 150 steps was not enough in our tests. Keep `causal` unless you can afford a long adaptation
+stage, compare against the causal baseline, and prefer bf16 or fp32: fp16 diverged in both bidirectional and
+prefix modes.
 
 ## Fine-tuning modes and LoRA
 
@@ -168,6 +173,13 @@ Rough sizing per 80 GB GPU, to be confirmed for your sequence lengths:
 | full + `shard_optimizer_states` on 8 GPUs | 5–7B |
 | LoRA (bf16 base) | 14B comfortably, 30B tight |
 | QLoRA (4-bit base) | 30B comfortably, 70B tight |
+
+## Measured results
+
+On one 8 GB RTX 2060 SUPER in fp16, after one epoch of 8k MNLI examples: Qwen3-0.6B + LoRA + `code_readout`
+went from 0.34 zero-shot to **0.80** dev accuracy (calibrated ECE 0.033). QLoRA reached 0.795, SmolLM2-360M +
+`option_scoring` 0.796, and ModernBERT-base 0.675. Configs, the full tables, and the negative bidirectional
+results are in [`docs/benchmarks.md`](docs/benchmarks.md).
 
 ## Calibration, selection and outputs
 

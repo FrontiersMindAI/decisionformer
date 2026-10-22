@@ -1,0 +1,3 @@
+base: e4_smollm2_bidirectional.yaml
+model: {backbone: runs/e6_smollm2_mntp/adapted}
+train: {output_dir: runs/e7_smollm2_bidirectional_after_mntp}

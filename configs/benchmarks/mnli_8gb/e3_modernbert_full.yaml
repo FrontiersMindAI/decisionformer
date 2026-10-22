@@ -1,0 +1,4 @@
+base: _base.yaml
+model: {backbone: answerdotai/ModernBERT-base, head: {type: fixed_softmax, labels: [entailment, neutral, contradiction]}}
+finetune: {mode: full, layerwise_lr_decay: 0.9}
+train: {output_dir: runs/e3_modernbert_full, lr: 5.0e-5, head_lr: 5.0e-4, eval_every: 125}

@@ -1,6 +1,7 @@
 # Decoder with bidirectional attention: every prompt token sees every other token, like an encoder.
 # Each option is pooled from its own tokens and scored, so any number of options works in any order.
-# For best results, adapt the decoder first (configs/recipes/adapt_mntp.yaml) and point `backbone` at it.
+# Experimental for decoders: without a long adaptation stage (configs/recipes/adapt_mntp.yaml) this underperforms
+# causal attention, often staying at chance; see docs/benchmarks.md. Prefer bf16/fp32: fp16 diverged here.
 base: ../base.yaml
 
 model:

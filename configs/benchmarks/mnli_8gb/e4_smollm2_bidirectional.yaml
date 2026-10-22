@@ -1,0 +1,4 @@
+base: _base.yaml
+model: {backbone: HuggingFaceTB/SmolLM2-360M-Instruct, attention: bidirectional, head: {type: option_scoring, mlp_hidden: 256, dropout: 0.1}}
+finetune: {mode: lora, gradient_checkpointing: true, lora: {r: 32, lora_alpha: 64, lora_dropout: 0.05}}
+train: {output_dir: runs/e4_smollm2_bidirectional, lr: 3.0e-4, head_lr: 1.0e-3, eval_every: 125}

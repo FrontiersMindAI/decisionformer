@@ -226,9 +226,11 @@ def test_head_config_extra_arguments_roundtrip():
     assert config.kwargs() == {"labels": ["a"], "mlp_hidden": 8}
 
 
-@pytest.mark.parametrize("recipe", sorted(str(p) for p in
-                                          (__import__("pathlib").Path(__file__).parents[1] / "configs" / "recipes")
-                                          .glob("*.yaml")))
+_CONFIGS = __import__("pathlib").Path(__file__).parents[1] / "configs"
+
+
+@pytest.mark.parametrize("recipe", sorted(str(p) for p in [*_CONFIGS.glob("recipes/*.yaml"),
+                                                           *_CONFIGS.glob("benchmarks/*/[!_]*.yaml")]))
 def test_shipped_recipes_validate(recipe):
     config = load_config(recipe)
     assert config.train.output_dir and config.model.heads

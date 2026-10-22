@@ -1,0 +1,2 @@
+base: e4_smollm2_bidirectional.yaml
+train: {output_dir: runs/b2_bidir_option_lowlr, lr: 1.0e-4}

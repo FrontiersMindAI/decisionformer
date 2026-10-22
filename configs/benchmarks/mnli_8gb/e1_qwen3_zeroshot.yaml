@@ -1,0 +1,4 @@
+base: _base.yaml
+model: {backbone: Qwen/Qwen3-0.6B, head: {type: lm_verbalizer}}
+finetune: {mode: head_only}
+train: {output_dir: runs/e1_qwen3_zeroshot}

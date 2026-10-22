@@ -1,0 +1,8 @@
+base: _base.yaml
+model: {backbone: Qwen/Qwen3-0.6B, head: {type: code_readout}}
+finetune:
+  mode: qlora
+  gradient_checkpointing: true
+  quantization: {bits: 4, quant_type: nf4, double_quant: true, compute_dtype: float16}
+  lora: {r: 16, lora_alpha: 32, lora_dropout: 0.05}
+train: {output_dir: runs/q1_qwen3_qlora_full, lr: 2.0e-4, head_lr: 2.0e-5, eval_every: 125}

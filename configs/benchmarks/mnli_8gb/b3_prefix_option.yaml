@@ -1,0 +1,3 @@
+base: e4_smollm2_bidirectional.yaml
+model: {attention: prefix_bidirectional}
+train: {output_dir: runs/b3_prefix_option}
