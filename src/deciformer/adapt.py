@@ -84,7 +84,8 @@ def adapt(config: RunConfig) -> Path:
     lengths = [len(ids) for ids in encoded]
     mask_id, pad_id = _mask_token_id(tokenizer), int(tokenizer.pad_token_id)
     specials = set(tokenizer.all_special_ids)
-    ddp: torch.nn.Module = DistributedDataParallel(model) if state.enabled else model
+    ddp: torch.nn.Module = (DistributedDataParallel(model, **dist_utils.no_forward_buffer_sync())
+                            if state.enabled else model)
     parameters = [p for p in model.parameters() if p.requires_grad]
     train = config.train
     optimizer = torch.optim.AdamW(parameters, lr=train.lr, weight_decay=train.weight_decay,
@@ -142,7 +143,7 @@ def adapt(config: RunConfig) -> Path:
         torch.nn.utils.clip_grad_norm_(parameters, train.max_grad_norm or math.inf)
         scaler.step(optimizer)
         scaler.update()
-        scheduler.step()
+        dist_utils.step_scheduler(scheduler)
         optimizer.zero_grad(set_to_none=True)
         step += 1
         if step % train.log_every == 0 or step in (1, total_steps):

@@ -94,7 +94,7 @@ class Trainer:
             if find_unused == "auto":
                 find_unused = len(self.model.heads) > 1
             self.ddp = DistributedDataParallel(self.model, find_unused_parameters=bool(find_unused),
-                                               broadcast_buffers=False)
+                                               **dist_utils.no_forward_buffer_sync())
         self.steps_per_epoch = len(self._plans(0))
         if self.steps_per_epoch == 0:
             raise ValueError("The training set is smaller than one global batch with drop_last=True")
@@ -193,7 +193,7 @@ class Trainer:
         grad_norm = float(torch.nn.utils.clip_grad_norm_(self.trainable, max_norm))
         self.scaler.step(self.optimizer)
         self.scaler.update()
-        self.scheduler.step()
+        dist_utils.step_scheduler(self.scheduler)
         self.optimizer.zero_grad(set_to_none=True)
         return grad_norm
 

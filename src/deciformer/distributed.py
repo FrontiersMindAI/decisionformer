@@ -74,6 +74,26 @@ def gather_objects(value: Any) -> list[Any]:
     return gathered
 
 
+def no_forward_buffer_sync() -> dict[str, bool]:
+    """DDP keyword for 'sync buffers at init only' across torch versions (renamed in torch 2.14)."""
+    import inspect
+
+    from torch.nn.parallel import DistributedDataParallel
+
+    if "forward_sync_buffers" in inspect.signature(DistributedDataParallel.__init__).parameters:
+        return {"forward_sync_buffers": False}
+    return {"broadcast_buffers": False}
+
+
+def step_scheduler(scheduler: Any) -> None:
+    """Advance the LR schedule every update, including fp16 steps the GradScaler skipped (expected early on)."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"Detected call of `lr_scheduler.step\(\)` before")
+        scheduler.step()
+
+
 def all_reduce_sum(values: list[float], device: torch.device) -> list[float]:
     if not dist.is_initialized():
         return values
