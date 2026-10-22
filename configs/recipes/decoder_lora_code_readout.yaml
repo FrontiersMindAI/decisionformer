@@ -1,0 +1,37 @@
+# Causal decoder (default attention) with LoRA and the answer-code readout initialized from the LM head.
+#   deciformer train configs/recipes/decoder_lora_code_readout.yaml
+#   torchrun --nproc-per-node 8 -m deciformer train configs/recipes/decoder_lora_code_readout.yaml
+base: ../base.yaml
+
+model:
+  backbone: Qwen/Qwen3-0.6B
+  attention: causal
+  head: {type: code_readout}
+
+finetune:
+  mode: lora
+  gradient_checkpointing: true
+  lora:                         # any peft.LoraConfig field is accepted here
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules: all-linear  # or a list, a regex, or a preset: attention | mlp | attention_mlp
+    use_rslora: false
+    use_dora: false
+    init_lora_weights: true     # true | gaussian | pissa | olora | ...
+    rank_pattern: {}
+    alpha_pattern: {}
+  export: adapter               # adapter | merged
+
+data:
+  train: data/mnli/train.jsonl
+  calibration: data/mnli/calibration.jsonl
+  eval: {dev: data/mnli/dev.jsonl}
+
+train:
+  output_dir: runs/qwen3-0.6b-lora-code
+  lr: 2.0e-4
+  head_lr: 2.0e-5               # the readout starts from LM-head rows; keep its step small
+  mixed_precision: bf16
+  token_budget: 16384
+  eval_every: 250

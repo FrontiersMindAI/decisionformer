@@ -1,0 +1,57 @@
+[project]
+name = "deciformer"
+version = "0.1.0.dev0"
+description = "Fine-tune any Hugging Face encoder or decoder into a calibrated one-pass decision model."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [{ name = "FrontiersMind AI" }]
+keywords = ["transformers", "classification", "decision", "fine-tuning", "lora", "calibration"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=2.6",
+  "transformers>=5.20,<6",
+  "peft>=0.21",
+  "pydantic>=2.8",
+  "omegaconf>=2.3",
+  "pyyaml>=6",
+  "safetensors>=0.4",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+qlora = ["bitsandbytes>=0.45"]
+data = ["datasets>=3"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+deciformer = "deciformer.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deciformer"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501", "B905"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: end-to-end or multi-process tests",
+  "gpu: requires a CUDA device",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

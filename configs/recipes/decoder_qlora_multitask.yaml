@@ -1,0 +1,36 @@
+# QLoRA (4-bit base) with one head per task. Records choose their head with the `task` field.
+# Requires `pip install deciformer[qlora]` and a CUDA GPU.
+base: ../base.yaml
+
+model:
+  backbone: Qwen/Qwen3-1.7B
+  heads:
+    nli: {type: code_readout}
+    sentiment: {type: code_readout}
+    boolq: {type: binary}
+
+finetune:
+  mode: qlora
+  gradient_checkpointing: true
+  quantization: {bits: 4, quant_type: nf4, double_quant: true, compute_dtype: bfloat16}
+  lora: {r: 16, lora_alpha: 32, lora_dropout: 0.05, target_modules: all-linear}
+
+data:
+  train: [data/mnli/train.jsonl, data/sst2/train.jsonl, data/boolq/train.jsonl]
+  calibration: [data/mnli/calibration.jsonl, data/sst2/calibration.jsonl, data/boolq/calibration.jsonl]
+  eval:
+    mnli: data/mnli/dev.jsonl
+    sst2: data/sst2/dev.jsonl
+    boolq: data/boolq/dev.jsonl
+
+train:
+  output_dir: runs/qwen3-1.7b-qlora-multitask
+  lr: 2.0e-4
+  head_lr: 1.0e-4
+  mixed_precision: bf16
+  token_budget: 16384
+  eval_every: 500
+
+eval:
+  selection_set: mnli
+  constraints: ["ece <= 0.05"]

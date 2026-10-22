@@ -1,0 +1,25 @@
+# Decoder with bidirectional attention: every prompt token sees every other token, like an encoder.
+# Each option is pooled from its own tokens and scored, so any number of options works in any order.
+# For best results, adapt the decoder first (configs/recipes/adapt_mntp.yaml) and point `backbone` at it.
+base: ../base.yaml
+
+model:
+  backbone: HuggingFaceTB/SmolLM2-360M-Instruct
+  attention: bidirectional      # causal (default) | bidirectional | prefix_bidirectional
+  head: {type: option_scoring, mlp_hidden: 256, dropout: 0.1}
+
+finetune:
+  mode: lora
+  lora: {r: 32, lora_alpha: 64, lora_dropout: 0.05, target_modules: all-linear}
+
+data:
+  train: data/mnli/train.jsonl
+  calibration: data/mnli/calibration.jsonl
+  eval: {dev: data/mnli/dev.jsonl}
+
+train:
+  output_dir: runs/smollm2-bidirectional
+  lr: 3.0e-4
+  head_lr: 1.0e-3
+  mixed_precision: bf16
+  eval_every: 250

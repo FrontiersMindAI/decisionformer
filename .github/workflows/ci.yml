@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests examples
+      - name: Test
+        env:
+          OMP_NUM_THREADS: "2"
+        run: pytest -q

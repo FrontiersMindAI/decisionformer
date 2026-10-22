@@ -1,0 +1,26 @@
+# Step 1 of a bidirectional decoder: masked next-token prediction (LLM2Vec-style) on in-domain text.
+#   deciformer adapt configs/recipes/adapt_mntp.yaml
+# Then train with model.backbone=runs/smollm2-mntp/adapted and model.attention=bidirectional.
+base: ../base.yaml
+
+model:
+  backbone: HuggingFaceTB/SmolLM2-360M-Instruct
+  attention: bidirectional
+  head: {type: option_scoring}   # unused by `adapt`; kept so the same file validates for training
+
+finetune:
+  mode: lora
+  lora: {r: 16, lora_alpha: 32, lora_dropout: 0.05}
+
+adapt:
+  texts: data/mnli/train.jsonl
+  text_field: state
+  mask_probability: 0.2
+  max_length: 512
+
+train:
+  output_dir: runs/smollm2-mntp
+  max_steps: 1000
+  global_batch_size: 64
+  lr: 1.0e-4
+  mixed_precision: bf16

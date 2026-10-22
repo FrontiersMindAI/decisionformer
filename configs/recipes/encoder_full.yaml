@@ -1,0 +1,26 @@
+# Encoder baseline: full fine-tuning of ModernBERT on MNLI with a fixed label set.
+#   python examples/prepare_datasets.py mnli --output data/mnli --train-size 50000
+#   deciformer train configs/recipes/encoder_full.yaml
+base: ../base.yaml
+
+model:
+  backbone: answerdotai/ModernBERT-base
+  pooler: {type: cls}
+  head: {type: fixed_softmax, labels: [entailment, neutral, contradiction]}
+
+finetune:
+  mode: full
+  layerwise_lr_decay: 0.9
+
+data:
+  train: data/mnli/train.jsonl
+  calibration: data/mnli/calibration.jsonl
+  eval: {dev: data/mnli/dev.jsonl}
+  max_length: 512
+
+train:
+  output_dir: runs/modernbert-mnli
+  lr: 5.0e-5
+  head_lr: 5.0e-4
+  mixed_precision: bf16
+  eval_every: 250
