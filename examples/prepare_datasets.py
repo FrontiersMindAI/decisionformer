@@ -85,10 +85,15 @@ def main() -> None:
     loader, train_split, validation_split, fn = DATASETS[args.dataset]
     dataset = loader()
     rng = random.Random(args.seed)
-    train = convert(dataset[train_split], "train", fn)
+    validation = convert(dataset[validation_split], "validation", fn)
+    held_out = {r["family"] for r in validation}
+    converted = convert(dataset[train_split], "train", fn)
+    # Official splits can share passages/premises; drop those training families so evaluation stays unseen.
+    train = [r for r in converted if r["family"] not in held_out]
+    if len(train) < len(converted):
+        print(f"Dropped {len(converted) - len(train)} training records whose family appears in {validation_split}")
     if args.train_size is not None and args.train_size < len(train):
         train = rng.sample(train, args.train_size)
-    validation = convert(dataset[validation_split], "validation", fn)
     families = sorted({r["family"] for r in validation})
     rng.shuffle(families)
     calibration_families = set(families[: int(len(families) * args.calibration_fraction)])

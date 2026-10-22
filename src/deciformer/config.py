@@ -166,6 +166,7 @@ class TrainConfig(_Strict):
 
 
 class EvalConfig(_Strict):
+    at_start: bool = False  # also evaluate before the first update (the step-0 baseline)
     ece_bins: int = 15
     micro_batch_size: int = 16
     token_budget: int | None = None

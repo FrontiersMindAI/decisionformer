@@ -86,20 +86,26 @@ class Trainer:
         logger.info("Backbone %s (%s, attention=%s, finetune=%s): %s trainable / %s parameters", config.model.backbone,
                     self.result.kind, self.result.attention, config.finetune.mode, f"{trainable:,}", f"{total:,}")
         _seed_everything(config.train.seed + self.state.rank)  # distinct dropout noise per rank
+        # Nothing to train (e.g. head_only + lm_verbalizer): evaluate and export, a zero-shot baseline.
+        self.evaluation_only = trainable == 0
         self.ddp: torch.nn.Module = self.model
-        if self.state.enabled:
+        if self.state.enabled and not self.evaluation_only:
             find_unused = config.train.find_unused_parameters
             if find_unused == "auto":
                 find_unused = len(self.model.heads) > 1
             self.ddp = DistributedDataParallel(self.model, find_unused_parameters=bool(find_unused),
                                                broadcast_buffers=False)
-        self.optimizer = build_optimizer(self.model, config.train, config.finetune, distributed=self.state.enabled)
         self.steps_per_epoch = len(self._plans(0))
         if self.steps_per_epoch == 0:
             raise ValueError("The training set is smaller than one global batch with drop_last=True")
-        self.total_steps = config.train.max_steps or config.train.epochs * self.steps_per_epoch
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer,
-                                                           lr_lambda(config.train.scheduler, self.total_steps))
+        self.total_steps = 0 if self.evaluation_only else (config.train.max_steps
+                                                           or config.train.epochs * self.steps_per_epoch)
+        self.optimizer: Any = None
+        self.scheduler: Any = None
+        if not self.evaluation_only:
+            self.optimizer = build_optimizer(self.model, config.train, config.finetune, distributed=self.state.enabled)
+            self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer,
+                                                               lr_lambda(config.train.scheduler, self.total_steps))
         self.scaler = torch.amp.GradScaler(self.state.device.type, enabled=config.train.mixed_precision == "fp16")
         self.trainable = [p for p in self.model.parameters() if p.requires_grad]
         self.step = 0
@@ -126,8 +132,14 @@ class Trainer:
     # ----------------------------------------------------------------------------------------------- training
     def train(self) -> dict[str, Any]:
         config, state = self.config, self.state
+        if self.evaluation_only:
+            logger.info("No trainable parameters: evaluation-only run (zero-shot baseline)")
+            self.evaluate()
+            return self._finish()
         logger.info("Training %d steps (%d per epoch) on %d GPU(s)/process(es)", self.total_steps,
                     self.steps_per_epoch, state.world_size)
+        if config.eval.at_start and self.step == 0:
+            self.evaluate()
         window_loss, window_count, window_start = 0.0, 0.0, time.monotonic()
         while self.step < self.total_steps:
             epoch, _ = self._plan_for(self.step)
@@ -276,7 +288,7 @@ class Trainer:
 
     def _resume(self) -> None:
         target = self.config.train.resume
-        if not target:
+        if not target or self.evaluation_only:
             return
         if target == "auto":
             found = sorted(p for p in (self.output / "checkpoints").glob("step-*")

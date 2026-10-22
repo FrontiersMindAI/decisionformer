@@ -161,8 +161,19 @@ def test_ordinal_head_on_score_questions(model_root, tmp_path):
 def test_lm_verbalizer_zero_shot_eval_needs_no_training(model_root, data_dir, tmp_path):
     config = make_config(tmp_path, build_decoder(model_root, "llama"), data_dir, head={"type": "lm_verbalizer"},
                          extra={"finetune": {"mode": "head_only"}})
-    with pytest.raises(ValueError, match="Nothing to train"):
-        train(config)
+    summary = train(config)
+    output = Path(config.train.output_dir)
+    assert summary["steps"] == 0 and summary["best_step"] == 0
+    assert _evals(output)[0]["sets"]["dev"]["raw"]["overall"]["count"] == 32
+    assert not _losses(output) and (output / "best" / "heads.safetensors").exists()
+
+
+def test_eval_at_start_records_the_baseline(model_root, data_dir, tmp_path):
+    config = make_config(tmp_path, build_encoder(model_root, "bert"), data_dir, steps=4,
+                         head={"type": "fixed_softmax", "labels": ["red", "blue", "green", "yellow"]},
+                         extra={"eval": {"at_start": True}})
+    train(config)
+    assert [e["step"] for e in _evals(Path(config.train.output_dir))] == [0, 4]
 
 
 def test_merged_export_matches_adapter(model_root, data_dir, tmp_path):
