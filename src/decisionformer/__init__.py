@@ -9,7 +9,7 @@
     decisionformer.train("deciformer15k_qwen3")          # fine-tune from a bundled recipe, a YAML file or a dict
 """
 
-__version__ = "0.2.0.dev0"
+__version__ = "0.2.0"
 
 from decisionformer.api import AutoDecisionModel, Decider, UnsupportedInput  # noqa: E402
 from decisionformer.config import RunConfig, list_recipes, load_config  # noqa: E402

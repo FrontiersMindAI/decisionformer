@@ -1,6 +1,6 @@
 [project]
 name = "decisionformer"
-version = "0.2.0.dev0"
+version = "0.2.0"
 description = "Train, load, serve and benchmark one-pass decision models on any Hugging Face backbone."
 readme = "README.md"
 license = "Apache-2.0"
@@ -27,6 +27,13 @@ dependencies = [
   "sentencepiece>=0.2",  # with protobuf: tokenizers shipped only as SentencePiece models (DeBERTa-v3, ALBERT)
   "protobuf>=4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/FrontiersMindAI/decisionformer"
+Repository = "https://github.com/FrontiersMindAI/decisionformer"
+Issues = "https://github.com/FrontiersMindAI/decisionformer/issues"
+Documentation = "https://github.com/FrontiersMindAI/decisionformer#readme"
+Dataset = "https://huggingface.co/datasets/FrontiersMind/deciformer-15k"
 
 [project.optional-dependencies]
 qlora = ["bitsandbytes>=0.45"]
