@@ -61,6 +61,7 @@ def test_standard_export_loads_and_decides(trained):
     config = json.loads((best / "decision_config.json").read_text())
     assert config["format_id"] == "d3-code-readout-v1" and config["prompt"] == "d3"
     assert config["attention_mode"] == "causal" and config["pooling"] == "last" and len(config["token_ids"]) == 255
+    assert config["max_length"] == 256, "exports record the length they were trained on (the serving limit)"
     assert set(config["temperature_by_type"]) == {"choice", "noul", "score"}
     assert (best / "readout.safetensors").exists() and (best / "model.safetensors").exists()
     card = (best / "README.md").read_text()
@@ -181,6 +182,8 @@ def test_systemone_server(trained):
     index_validate(QUESTIONS, response.json())
     too_long = client.post("/v1/systemone", json={"state": " ".join(["red"] * 300), "questions": {"q": {"type": "noul"}}})
     assert too_long.status_code == 422 and "maximum context length" in too_long.text
+    no_state = client.post("/v1/systemone", json={"questions": {"q": {"type": "noul"}}})
+    assert no_state.status_code == 400 and "state" in no_state.text
     bad = client.post("/v1/systemone", json={"state": "x", "questions": {"q": {"type": "score", "criteria": ["a"]}}})
     assert bad.status_code == 400 and "a score takes 2 to 10 levels" in bad.text
     schema = client.get("/openapi.json").json()

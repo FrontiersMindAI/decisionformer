@@ -10,22 +10,21 @@ generation. Three lines to decide, one command to train, one command to serve.
 
 Python 3.10 or newer, with PyTorch 2.6+ and transformers 5.20+.
 
-**With pip** (from the first public release; until then, install from GitHub)
-
-```bash
-pip install decisionformer
-pip install "decisionformer[serve]"       # with the API server
-```
-
 **From GitHub**
 
 ```bash
-pip install "git+https://github.com/FrontiersMindAI/decisionformer.git"
+pip install "decisionformer[serve] @ git+https://github.com/FrontiersMindAI/decisionformer.git"
 
 # or, to develop
 git clone https://github.com/FrontiersMindAI/decisionformer.git
 cd decisionformer
 pip install -e ".[dev]"
+```
+
+**With pip**, once v0.2.0 is published on PyPI (the name currently holds an empty placeholder):
+
+```bash
+pip install "decisionformer[serve]"
 ```
 
 Optional extras, combined as `pip install "decisionformer[serve,qlora]"`:
@@ -96,7 +95,16 @@ response = model.decide(
 ```
 
 `choice` picks one of the `criteria`, `noul` answers yes/no with the probability of yes, and `score` picks one of
-2 to 10 ordered levels. `model.decide_many([...])` answers several requests in shared batches.
+2 to 10 ordered levels; every question needs a `type`. `confidence` is not the top probability: it is 1 minus the
+normalized entropy of the probabilities, from 0 (all options equally likely) to 1 (certain), so a 0.51/0.49 choice
+has a confidence near 0. Checkpoints in the AutoJev format report the top probability's margin over chance instead.
+`model.decide_many([...])` answers several requests in shared batches.
+
+A model refuses requests longer than the length it was trained on (`data.max_length`, 1,024 tokens by default) with
+a `ContextLengthError` (HTTP 422 from the server) instead of truncating them; pass `max_length=` to
+`from_pretrained`, or `--max-length` to `serve`, to allow longer ones. On a CPU, `vllm-sr/d3-edge` (0.6B parameters)
+answers a request in several seconds; the Decision Index's latency rule (a median of at most 1,000 ms per request)
+needs a GPU.
 
 ### Serve as an API
 
@@ -113,7 +121,7 @@ curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
 }'
 ```
 
-The server takes the same `state` and `questions` and returns the same JSON as `decide`, with `id`, `object` and
+The server takes the same `state` (required, may be empty) and `questions` and returns the same JSON as `decide`, with `id`, `object` and
 `created` added. It is the System One API used by Jev, vLLM and the Decision Index; the request and response
 schemas are at `/docs`. Over-long requests are refused with HTTP 422, never truncated, and
 `--api-key-env MY_KEY_VAR` requires `Authorization: Bearer <key>`. A request that arrives while the model is idle
@@ -130,7 +138,9 @@ decisionformer serve vllm-sr/d3-edge --backend vllm
 ## Supported backbones
 
 Every family below is fine-tuned, exported, reloaded and checked against the Decision Index's response rules in
-`tests/test_zoo.py`, newest first within each group:
+`tests/test_zoo.py`, using tiny randomly initialized models of each architecture, newest first within each group.
+Real checkpoints fine-tuned, exported and reloaded so far: Qwen3-0.6B, Qwen3.5-0.8B, SmolLM2-135M and 360M,
+ModernBERT-base and T5-small; `vllm-sr/d3-edge` is loaded and served (`docs/benchmarks.md`).
 
 | | families |
 |---|---|

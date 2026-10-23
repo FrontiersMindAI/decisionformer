@@ -18,7 +18,7 @@ import torch
 from torch.nn.parallel import DistributedDataParallel
 
 from decisionformer import distributed as dist_utils
-from decisionformer.config import RunConfig, dump_config, load_config
+from decisionformer.config import RunConfig, check_data_paths, dump_config, load_config
 from decisionformer.data import Collator, DecisionDataset, plan_epoch
 from decisionformer.finetune import count_parameters, effective_precision
 from decisionformer.inference import (
@@ -98,12 +98,11 @@ class Trainer:
         self.config = config
         self.state = dist_utils.setup(config.distributed.backend, config.distributed.timeout_minutes)
         _setup_logging(self.state.is_main)
+        check_data_paths(config)  # before any download or output folder
         self.output = Path(config.train.output_dir)
         if self.state.is_main:
             self.output.mkdir(parents=True, exist_ok=True)
             (self.output / "config.yaml").write_text(dump_config(config))
-        if config.data.train is None:
-            raise ValueError("data.train is required for training")
         _seed_everything(config.train.seed)
         self.result: BuildResult = build_model(config, self.state.device, training=True)
         self.model = self.result.model

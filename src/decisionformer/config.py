@@ -263,11 +263,64 @@ def load_config(source: str | Path | Mapping[str, Any], overrides: Sequence[str]
         for key, value in overrides.items():
             OmegaConf.update(node, key, value, merge=True)
     elif overrides:
+        malformed = [item for item in overrides if "=" not in item]
+        if malformed:
+            raise ValueError(f"override {malformed[0]!r} needs the form key=value, e.g. train.lr=1e-4")
         node = OmegaConf.merge(node, OmegaConf.from_dotlist(list(overrides)))
     config = RunConfig.model_validate(OmegaConf.to_container(node, resolve=True))
     if validate_components:
         validate_components_of(config)
     return config
+
+
+def check_data_paths(config: RunConfig) -> None:
+    """Fail before any model is loaded when a training, evaluation or calibration file is missing."""
+    if config.data.train is None:
+        raise ValueError("data.train is required for training")
+    paths: list[str] = []
+    for value in (config.data.train, config.data.calibration, *config.data.eval.values()):
+        paths += [value] if isinstance(value, str) else list(value or [])
+    missing = [path for path in paths if not path.startswith("hf:") and not Path(path).expanduser().exists()]
+    if missing:
+        hint = ("Create it first: decisionformer data split hf:FrontiersMind/deciformer-15k:train "
+                "--out data/deciformer-15k" if "deciformer-15k" in missing[0] else
+                "Point data.train, data.eval and data.calibration at your JSONL files, or make them with "
+                "`decisionformer data split SOURCE --out DIR`")
+        raise FileNotFoundError(f"data file not found: {missing[0]}. {hint}")
+
+
+# Names from other trainers (Hugging Face TrainingArguments) and the setting they mean here.
+COMMON_NAMES = {"learning_rate": "lr", "batch_size": "global_batch_size", "train_batch_size": "global_batch_size",
+                "per_device_train_batch_size": "micro_batch_size", "num_train_epochs": "epochs",
+                "num_epochs": "epochs", "steps": "max_steps", "bf16": "mixed_precision", "fp16": "mixed_precision",
+                "model_name": "backbone", "model_name_or_path": "backbone", "max_seq_length": "max_length"}
+
+
+def explain(error: Exception) -> str:
+    """A short, readable message for a config error (one line per problem, with a suggestion for typos)."""
+    import difflib
+
+    from pydantic import ValidationError
+
+    if not isinstance(error, ValidationError):
+        return str(error)
+    lines = []
+    for problem in error.errors():
+        location = [str(part) for part in problem["loc"]]
+        key = ".".join(location)
+        if problem["type"] == "extra_forbidden":
+            model: Any = RunConfig
+            for part in location[:-1]:
+                field = getattr(model, "model_fields", {}).get(part)
+                model = field.annotation if field is not None else None
+            options = list(getattr(model, "model_fields", {}))
+            alias = COMMON_NAMES.get(location[-1])
+            close = [alias] if alias in options else difflib.get_close_matches(location[-1], options, n=1)
+            suggestion = f" (did you mean {'.'.join([*location[:-1], close[0]])}?)" if close else ""
+            lines.append(f"unknown setting {key}{suggestion}")
+        else:
+            lines.append(f"{key}: {problem['msg']}")
+    return "; ".join(lines)
 
 
 def validate_components_of(config: RunConfig) -> None:

@@ -23,3 +23,4 @@ train:
   head_lr: 2.0e-5                # the readout starts from the LM-head rows; keep its step small
   token_budget: 8192
   eval_every: 125
+  save_every: 125               # resumable state; rerun the same command to resume
