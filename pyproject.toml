@@ -34,7 +34,7 @@ serve = ["fastapi>=0.110", "uvicorn>=0.29"]
 vllm = ["fastapi>=0.110", "uvicorn>=0.29", "vllm>=0.12"]  # decision-model support: vLLM nightly from 2026-10-15
 fla = ["flash-linear-attention>=0.5"]  # fast Gated DeltaNet kernels for Qwen3.5/3.8 backbones
 data = ["datasets>=3"]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "fastapi>=0.110", "httpx>=0.27"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
 
 [project.scripts]
 decisionformer = "decisionformer.cli:main"

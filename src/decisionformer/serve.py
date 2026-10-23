@@ -90,7 +90,7 @@ def load_decider(model: str, *, backend: str = "transformers", device: str | Non
 
 def serve(model: str, *, host: str = "127.0.0.1", port: int = 8000, device: str | None = None,
           backend: str = "transformers", api_key_env: str = "DECISIONFORMER_API_KEY", **load_options: Any) -> None:
+    decider = load_decider(model, backend=backend, device=device, **load_options)  # model errors first
     import uvicorn
 
-    decider = load_decider(model, backend=backend, device=device, **load_options)
     uvicorn.run(create_app(decider, api_key=os.environ.get(api_key_env)), host=host, port=port)
