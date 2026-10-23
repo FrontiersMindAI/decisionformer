@@ -1,6 +1,6 @@
 # DecisionFormer
 
-![DecisionFormer](assets/decisionformer.svg)
+![DecisionFormer](https://raw.githubusercontent.com/FrontiersMindAI/decisionformer/main/assets/decisionformer.svg)
 
 The simplest way to fine-tune and serve decision models on any Hugging Face model. Give it a *state* and typed
 *questions*; it returns a calibrated probability for every option in a single forward pass, with no text
@@ -10,21 +10,19 @@ generation. Three lines to decide, one command to train, one command to serve.
 
 Python 3.10 or newer, with PyTorch 2.6+ and transformers 5.20+.
 
-**From GitHub**
+```bash
+pip install decisionformer                 # the library and CLI
+pip install "decisionformer[serve]"        # with the API server
+```
+
+The latest code, or a development install:
 
 ```bash
 pip install "decisionformer[serve] @ git+https://github.com/FrontiersMindAI/decisionformer.git"
 
-# or, to develop
 git clone https://github.com/FrontiersMindAI/decisionformer.git
 cd decisionformer
 pip install -e ".[dev]"
-```
-
-**With pip**, once v0.2.0 is published on PyPI (the name currently holds an empty placeholder):
-
-```bash
-pip install "decisionformer[serve]"
 ```
 
 Optional extras, combined as `pip install "decisionformer[serve,qlora]"`:
