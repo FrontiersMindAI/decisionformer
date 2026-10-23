@@ -33,6 +33,7 @@ from decisionformer.finetune import (
 from decisionformer.inference import autocast
 from decisionformer.optim import lr_lambda
 from decisionformer.schema import read_records
+from decisionformer.trainer import _setup_logging
 
 logger = logging.getLogger("decisionformer.adapt")
 
@@ -68,8 +69,7 @@ def adapt(config: RunConfig) -> Path:
     if config.finetune.mode not in ("full", "lora"):
         raise ValueError("adapt supports finetune.mode 'full' or 'lora'")
     state = dist_utils.setup(config.distributed.backend, config.distributed.timeout_minutes)
-    logging.basicConfig(level=logging.INFO if state.is_main else logging.WARNING,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True)
+    _setup_logging(state.is_main)
     torch.manual_seed(config.train.seed)
     model_cfg = config.model
     tokenizer = load_tokenizer(model_cfg.backbone, model_cfg.revision, model_cfg.trust_remote_code)

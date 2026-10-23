@@ -43,6 +43,13 @@ def _local_dir(name_or_path: str | Path, revision: str | None, token: str | None
     return Path(snapshot_download(str(name_or_path), revision=revision, token=token))
 
 
+def display_name(name_or_path: str | Path, root: Path) -> str:
+    """How a model names itself in responses: its Hub id, or its run name for a local `runs/<name>/best`."""
+    if not Path(str(name_or_path)).expanduser().is_dir():
+        return str(name_or_path)
+    return root.resolve().parent.name if root.name in ("best", "last") else root.name
+
+
 def _prompt_name(config: dict[str, Any]) -> str:
     name = config.get("prompt") or config.get("prompt_format")
     if name:
@@ -132,7 +139,7 @@ class Decider:
         builder = PromptBuilder(tokenizer, style, kind, max_length=limit, overflow="error", codes=codes,
                                 code_token_ids=config.get("token_ids") or None,
                                 chat_template_kwargs=ext.get("chat_template_kwargs"))
-        name = ext.get("name") or (str(name_or_path) if not Path(str(name_or_path)).is_dir() else root.name)
+        name = ext.get("name") or display_name(name_or_path, root)
         return cls(model, builder, tokenizer, config, device=device, name=name, max_input_tokens=limit,
                    batch_size=batch_size, path=root)
 

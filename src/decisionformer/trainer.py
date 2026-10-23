@@ -9,6 +9,7 @@ import math
 import random
 import shutil
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ import torch
 from torch.nn.parallel import DistributedDataParallel
 
 from decisionformer import distributed as dist_utils
-from decisionformer.config import RunConfig, dump_config
+from decisionformer.config import RunConfig, dump_config, load_config
 from decisionformer.data import Collator, DecisionDataset, plan_epoch
 from decisionformer.finetune import count_parameters, effective_precision
 from decisionformer.inference import (
@@ -41,6 +42,18 @@ logger = logging.getLogger("decisionformer")
 def _setup_logging(is_main: bool) -> None:
     logging.basicConfig(level=logging.INFO if is_main else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True)
+    for name in ("httpx", "httpx2", "httpcore", "httpcore2", "huggingface_hub", "urllib3", "filelock"):  # Hub requests
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+PRECISION_NAMES = {"no": "float32", "bf16": "bf16 autocast", "fp16": "fp16 autocast with loss scaling"}
+
+
+def _duration(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds >= 3600:
+        return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+    return f"{seconds // 60}m{seconds % 60:02d}s" if seconds >= 60 else f"{seconds}s"
 
 
 def _seed_everything(seed: int) -> None:
@@ -57,6 +70,27 @@ def _gather_to_main(value: Any) -> list[Any]:
     gathered: list[Any] | None = [None] * dist.get_world_size() if dist.get_rank() == 0 else None
     dist.gather_object(value, gathered, dst=0)
     return gathered or []
+
+
+def _warn_about_leakage(config: RunConfig) -> None:
+    """Warn when training data shares ids, families or identical states with the evaluation or calibration data
+    (`decisionformer data check` also looks for near-duplicates)."""
+    from decisionformer.datacheck import check_splits
+
+    splits = {name: path for name, path in config.data.eval.items() if isinstance(path, str)}
+    if isinstance(config.data.calibration, str):
+        splits["calibration"] = config.data.calibration
+    if not splits or not isinstance(config.data.train, str):
+        return
+    try:
+        report = check_splits({**splits, "train": config.data.train}, near_duplicates=False)
+    except Exception as error:  # noqa: BLE001 - a check must never stop training
+        logger.debug("Leakage check skipped: %s", error)
+        return
+    for problem in report["problems"]:
+        logger.warning("%s shares %d %s value(s) with an earlier split (e.g. %s); evaluation on it will be "
+                       "optimistic. Run `decisionformer data check` for details.", problem["split"],
+                       problem["count"], problem["overlap"], ", ".join(map(str, problem["examples"][:3])))
 
 
 class Trainer:
@@ -77,6 +111,8 @@ class Trainer:
         self.train_set = DecisionDataset.from_paths(config.data.train, builder, labeled_only=True)
         self.eval_sets = {name: DecisionDataset.from_paths(paths, builder) for name, paths in config.data.eval.items()}
         self.calibration = DecisionDataset.from_paths(config.data.calibration, builder) if config.data.calibration else None
+        if self.state.is_main:
+            _warn_about_leakage(config)
         pad = self.result.tokenizer.pad_token_id
         self.train_collator = Collator(builder, pad, shuffle_options=config.data.shuffle_options, seed=config.train.seed)
         self.eval_collator = Collator(builder, pad)
@@ -138,11 +174,12 @@ class Trainer:
             logger.info("No trainable parameters: evaluation-only run (zero-shot baseline)")
             self.evaluate()
             return self._finish()
-        logger.info("Training %d steps (%d per epoch) on %d process(es), device %s, precision %s", self.total_steps,
-                    self.steps_per_epoch, state.world_size, state.device.type, self.precision)
+        logger.info("Training %d steps (%d per epoch) on %d process(es), device %s, %s", self.total_steps,
+                    self.steps_per_epoch, state.world_size, state.device.type, PRECISION_NAMES[self.precision])
         if config.eval.at_start and self.step == 0:
             self.evaluate()
         window_loss, window_count, window_start = 0.0, 0.0, time.monotonic()
+        started, first_step = time.monotonic(), self.step
         while self.step < self.total_steps:
             epoch, _ = self._plan_for(self.step)
             loss_sum, count = self.accumulate_gradients(self.step)
@@ -152,16 +189,20 @@ class Trainer:
             self.step += 1
             if self.step % config.train.log_every == 0 or self.step in (1, self.total_steps):
                 loss_sum, count = dist_utils.all_reduce_sum([window_loss, window_count], state.device)
-                self._log({"event": "train", "step": self.step, "epoch": epoch, "loss": loss_sum / max(count, 1),
-                           "lr": self.scheduler.get_last_lr()[0], "grad_norm": grad_norm,
-                           "seconds": time.monotonic() - window_start})
+                per_step = (time.monotonic() - started) / (self.step - first_step)
+                self._log({"event": "train", "step": self.step, "total_steps": self.total_steps, "epoch": epoch,
+                           "loss": loss_sum / max(count, 1), "lr": self.scheduler.get_last_lr()[0],
+                           "grad_norm": grad_norm, "seconds": time.monotonic() - window_start,
+                           "eta_seconds": per_step * (self.total_steps - self.step)})
                 window_loss, window_count, window_start = 0.0, 0.0, time.monotonic()
             evaluate_now = config.train.eval_every and self.step % config.train.eval_every == 0
             if evaluate_now or self.step == self.total_steps:
                 self.evaluate()
-            if config.train.save_every and (self.step % config.train.save_every == 0 or self.step == self.total_steps):
-                self.save_checkpoint()
-            if config.train.stop_after is not None and self.step >= config.train.stop_after:
+            pausing = config.train.stop_after is not None and self.step >= config.train.stop_after
+            if self.step < self.total_steps and (pausing or (config.train.save_every
+                                                             and self.step % config.train.save_every == 0)):
+                self.save_checkpoint()  # resumable state; a finished run needs none (best/ and last/ are exported)
+            if pausing:
                 logger.info("Pausing at step %d (train.stop_after); resume with train.resume=auto", self.step)
                 break
         return self._finish()
@@ -302,7 +343,12 @@ class Trainer:
             found = sorted(p for p in (self.output / "checkpoints").glob("step-*")
                            if p.is_dir() and not p.name.endswith(".tmp"))
             if not found:
-                logger.info("resume=auto: no checkpoint found, starting fresh")
+                finished = self.output / "summary.json"
+                if finished.exists() and json.loads(finished.read_text()).get("complete"):
+                    logger.warning("%s holds a finished run; training it again from step 0 overwrites best/ and "
+                                   "last/ (set train.output_dir to keep it)", self.output)
+                else:
+                    logger.info("resume=auto: no checkpoint found, starting fresh")
                 return
             path = found[-1]
         else:
@@ -337,7 +383,9 @@ class Trainer:
         with (self.output / "metrics.jsonl").open("a") as stream:
             stream.write(line + "\n")
         if record.get("event") == "train":
-            logger.info("step %(step)d loss %(loss).4f lr %(lr).3g grad_norm %(grad_norm).3f", record)
+            logger.info("step %d/%d loss %.4f lr %.3g grad_norm %.3f, %s left (training only)", record["step"],
+                        record["total_steps"], record["loss"], record["lr"], record["grad_norm"],
+                        _duration(record["eta_seconds"]))
         else:
             for name, entry in record.get("sets", {}).items():
                 for flavor, metrics in entry.items():
@@ -357,6 +405,8 @@ class Trainer:
                 shutil.copytree(self.output / "last", self.output / "best", dirs_exist_ok=True)
             if config.finetune.export == "merged" and config.finetune.mode in ("lora", "qlora"):
                 self._merge_exports()
+            if self.step == self.total_steps and (self.output / "checkpoints").exists():
+                shutil.rmtree(self.output / "checkpoints")  # only needed to resume an unfinished run
             summary = {"steps": self.step, "complete": self.step == self.total_steps, "best_step": self.best_step,
                        "best": self.best, "temperatures": self.temperatures, "output_dir": str(self.output)}
             if config.train.push_to_hub and (self.output / "best").exists():
@@ -382,7 +432,18 @@ class Trainer:
                 merge_checkpoint(self.output / name, device="cpu", dtype=dtype, save_dtype=export_dtype(self.config))
 
 
-def train(config: RunConfig) -> dict[str, Any]:
+def train(config: RunConfig | str | Path | Mapping[str, Any],
+          overrides: Sequence[str] | Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Fine-tune and export a decision model; returns the run summary.
+
+        decisionformer.train("deciformer15k_qwen3")                                  # a bundled recipe
+        decisionformer.train("my.yaml", {"train.lr": 1e-4, "train.max_steps": 200})  # a file, with overrides
+        decisionformer.train({"model": {...}, "data": {...}, "train": {"output_dir": "runs/x"}})
+    """
+    if not isinstance(config, RunConfig):
+        config = load_config(config, overrides)
+    elif overrides:
+        config = load_config(config.model_dump(mode="json"), overrides)
     trainer = Trainer(config)
     try:
         return trainer.train()

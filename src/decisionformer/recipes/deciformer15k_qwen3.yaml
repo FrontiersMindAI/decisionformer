@@ -1,0 +1,25 @@
+# Start here: Qwen3-0.6B with LoRA on FrontiersMind/deciformer-15k (9 decision tasks, English and German).
+# The tasks: safety, toxicity, QA, NLI, paraphrase, fact checking and intent routing.
+#   decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+#   decisionformer train deciformer15k_qwen3
+# One epoch (375 updates). Trains in bf16; GPUs without bf16 (Turing, V100) fall back to fp16 automatically.
+
+model:
+  backbone: Qwen/Qwen3-0.6B
+  head: {type: code_readout}
+
+finetune:
+  mode: lora
+  gradient_checkpointing: true
+  lora: {r: 16, lora_alpha: 32, lora_dropout: 0.05, target_modules: all-linear}
+
+data:
+  train: data/deciformer-15k/train.jsonl
+  calibration: data/deciformer-15k/calibration.jsonl
+  eval: {dev: data/deciformer-15k/dev.jsonl}
+
+train:
+  output_dir: runs/deciformer15k-qwen3-0.6b
+  head_lr: 2.0e-5                # the readout starts from the LM-head rows; keep its step small
+  token_budget: 8192
+  eval_every: 125

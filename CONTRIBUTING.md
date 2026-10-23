@@ -34,6 +34,13 @@ class MyHead(Head):
 
 Unknown or missing constructor arguments are reported when the config loads.
 
+## Adding a recipe
+
+Recipes ship with the package in `src/decisionformer/recipes/`, so `decisionformer train NAME` works after a plain
+`pip install`. The first comment line is the description `decisionformer recipes` shows. Put only what differs from
+the defaults in a recipe, and add a recipe only after it has learned in a real run. The unit tests load every
+recipe.
+
 ## Development loop
 
 ```bash

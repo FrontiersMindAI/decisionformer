@@ -183,6 +183,10 @@ def test_systemone_server(trained):
     assert too_long.status_code == 422 and "maximum context length" in too_long.text
     bad = client.post("/v1/systemone", json={"state": "x", "questions": {"q": {"type": "score", "criteria": ["a"]}}})
     assert bad.status_code == 400 and "a score takes 2 to 10 levels" in bad.text
+    schema = client.get("/openapi.json").json()
+    request_schema = schema["paths"]["/v1/systemone"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    assert request_schema["$ref"].endswith("SystemOneRequest")
+    assert {"SystemOneRequest", "SystemOneResponse", "QuestionSpec", "Answer"} <= set(schema["components"]["schemas"])
     locked = TestClient(create_app(model, api_key="secret"))
     assert locked.post("/v1/systemone", json=body).status_code == 401
     assert locked.post("/v1/systemone", json=body, headers={"Authorization": "Bearer secret"}).status_code == 200
@@ -208,6 +212,20 @@ def test_predict_and_eval_commands(trained, data_dir, tmp_path, capsys):
     main(["predict", str(trained / "best"), str(requests), "--output", str(tmp_path / "out.jsonl"), "--device", "cpu"])
     out = json.loads((tmp_path / "out.jsonl").read_text())
     assert out["id"] == "r1" and set(out["answers"]) == set(QUESTIONS)
+    assert out["model"] == trained.name, "a local runs/<name>/best answers as <name>"
+    # every accepted shape (request, single question, flat row), and a record that cannot be answered
+    mixed = tmp_path / "mixed.jsonl"
+    mixed.write_text("".join(json.dumps(r) + "\n" for r in [
+        {"id": "flat", "state": "the tiny square is green .", "question": "What is the color ?",
+         "question_type": "choice", "options": ["red", "green"], "option_descriptions": [None, None], "label": "green"},
+        {"id": "single", "state": "the tiny square is green .", "question": {"type": "noul"}},
+        {"id": "broken", "state": "x", "questions": {"q": {"type": "choice"}}},
+    ]))
+    main(["predict", str(trained / "best"), str(mixed), "--output", str(tmp_path / "mixed.out"), "--device", "cpu"])
+    rows = {r["id"]: r for r in map(json.loads, (tmp_path / "mixed.out").read_text().splitlines())}
+    assert set(rows["flat"]["answers"]["decision"]["probabilities"]) == {"red", "green"}
+    assert rows["single"]["answers"]["decision"]["type"] == "noul"
+    assert "criteria" in rows["broken"]["error"]["message"] and "answers" not in rows["broken"]
     main(["eval", str(trained / "best"), str(data_dir / "multi_dev.jsonl"), "--device", "cpu"])
     report = json.loads(capsys.readouterr().out)
     assert report["overall"]["count"] == 48 and set(report["types"]) == {"choice", "noul", "score"}
@@ -237,3 +255,43 @@ def test_push_fills_the_repo_id_into_the_model_card(trained, monkeypatch):
     assert push_folder(trained / "best", "org/decider") == "https://huggingface.co/org/decider"
     assert calls["private"] is True and "README.md" in calls["ignored"]
     assert 'AutoDecisionModel.from_pretrained("org/decider")' in calls["card"] and "<this repo>" not in calls["card"]
+
+
+def test_server_batches_concurrent_requests_and_isolates_errors(trained):
+    """Requests that queue up while the model is busy share one decide_many call; a bad one fails alone."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from decisionformer.serve import Batcher, create_app
+
+    model = AutoDecisionModel.from_pretrained(trained / "best", device="cpu", dtype=torch.float32, max_length=200)
+    original, release, calls = model.decide_many, threading.Event(), []
+
+    def recording(requests):
+        calls.append(len(requests))
+        release.wait(60)  # the first call holds the worker until every other request is queued
+        return original(requests)
+
+    model.decide_many = recording
+    batcher = Batcher(model, max_batch=8)
+    good = {"state": "the huge triangle is yellow .", "questions": {"red": QUESTIONS["red"]}}
+    too_long = {"state": " ".join(["red"] * 300), "questions": {"q": {"type": "noul"}}}
+    first = batcher.submit(good)
+    while not calls:
+        threading.Event().wait(0.01)
+    queued = [batcher.submit(request) for request in (good, too_long, good)]
+    release.set()
+    assert first.result(timeout=60)["answers"]["red"]["type"] == "noul"
+    assert queued[0].result(timeout=60)["answers"]["red"]["type"] == "noul"
+    with pytest.raises(ContextLengthError):
+        queued[1].result(timeout=60)
+    assert queued[2].result(timeout=60)["answers"]["red"]["type"] == "noul"
+    assert calls == [1, 3, 1, 1, 1], "one alone, three queued as one batch, then one by one after the failure"
+
+    model.decide_many = original
+    client = TestClient(create_app(model, max_batch=4))
+    with ThreadPoolExecutor(8) as pool:
+        statuses = list(pool.map(lambda _: client.post("/v1/systemone", json=good).status_code, range(8)))
+    assert statuses == [200] * 8 and client.get("/health").json()["max_batch"] == 4

@@ -159,6 +159,24 @@ def _distribution(question: Question, value: Any, where: str) -> list[float] | N
     return [v / total for v in values]
 
 
+def as_request(record: dict[str, Any], index: int = 0) -> tuple[Any, dict[str, Any]]:
+    """The `state` and System One `questions` of a record in any accepted shape: a request with `questions`, a single
+    `question` object, or a flat one-question row."""
+    request_id = str(record.get("id", index))
+    if "state" not in record:
+        raise DecisionInputError(f"record {request_id}: needs `state`")
+    key = str(record.get("question_key", "decision"))
+    if "questions" in record:
+        return record["state"], record["questions"]
+    if isinstance(record.get("question"), str) and "options" in record:
+        question, _, _ = _flat_question(key, record, request_id)
+        return record["state"], {key: {"type": question.type, "instructions": question.instructions,
+                                       "criteria": question.criteria}}
+    if isinstance(record.get("question"), dict):
+        return record["state"], {key: record["question"]}
+    raise DecisionInputError(f"record {request_id}: needs `questions` (or a single `question`)")
+
+
 FLAT_FIELDS = ("question_type", "options", "option_descriptions", "label_index", "label_code", "soft_target")
 
 

@@ -13,6 +13,28 @@ records each (`dev_small.jsonl`, `calibration_small.jsonl`, separated by whole f
 ¹ Before v0.2's final pooler default: code-readout heads now read the last token in every attention mode (the
 Decision 3.0 layout).
 
+**deciformer-15k, the starting recipe.** `decisionformer train deciformer15k_qwen3` (Qwen3-0.6B, LoRA r16, causal,
+one epoch of 11,982 records = 375 updates, fp16 on the 2060 SUPER, 30 minutes with evaluations) on the family-level
+split from `decisionformer data split` (1,509 dev records):
+
+| step | dev accuracy (calibrated) | ECE | Brier | NLL |
+|---|---|---|---|---|
+| 125 | 0.792 | 0.039 | 0.314 | 0.585 |
+| 250 | 0.805 | 0.030 | 0.281 | 0.533 |
+| 375 | **0.824** | 0.023 | 0.252 | 0.467 |
+
+Per task at step 375: Civil Comments 0.904, PAWS 0.875, MASSIVE en-US 0.864, SQuAD 2.0 0.860, MASSIVE de-DE 0.823,
+Aegis 2.0 0.790, MultiNLI 0.774, BoolQ 0.772, VitaminC 0.750.
+
+**Known issue: Qwen3.5 with causal attention.** Qwen3.5-0.8B fine-tuned with causal attention stayed at chance on
+MNLI (0.34-0.37) in four runs: LoRA with an fp16 base (150 steps, twice), QLoRA (60 steps), and LoRA on an fp32 base
+(60 steps). Each run's loss rose near step 25 and then settled at the class prior. Before training, the code
+readout's logits equal the language model's own next-token logits for the answer codes exactly, so the prompt,
+answer position and readout rows are correct. Qwen3-0.6B learns with causal attention, and Qwen3.5 learned with
+bidirectional attention and a mean pooler (0.84 above). With bidirectional attention and the last-token readout
+(the Decision 3.0 layout, the default since v0.2), a 40-step QLoRA check on deciformer-15k showed the same loss spike
+near step 20 (1.55 → 2.04 → 1.23) and 0.41 dev accuracy on 128 records, so no Qwen3.5 recipe ships yet.
+
 **Parity with the Decision 3.0 reference runtime.** `AutoDecisionModel.from_pretrained("vllm-sr/d3-edge")` against
 the checkpoint's own `trust_remote_code` runtime, BF16, four requests (choice, noul and score questions, an empty
 state, a JSON state, a 32-option choice): one question per forward pass, the probabilities are identical (maximum
