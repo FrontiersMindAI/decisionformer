@@ -35,6 +35,19 @@ bidirectional attention and a mean pooler (0.84 above). With bidirectional atten
 (the Decision 3.0 layout, the default since v0.2), a 40-step QLoRA check on deciformer-15k showed the same loss spike
 near step 20 (1.55 → 2.04 → 1.23) and 0.41 dev accuracy on 128 records, so no Qwen3.5 recipe ships yet.
 
+**Bidirectional attention on a smaller decoder.** Three 50-step LoRA runs of the `deciformer15k_qwen3` recipe
+(Qwen3-0.6B, deciformer-15k, 256 dev records), identical except for attention and pooling:
+
+| attention | pooler | train loss, step 10 → 50 | dev accuracy |
+|---|---|---|---|
+| causal | last token | 1.55 → 0.73 | **0.672** |
+| bidirectional | last token (the Decision 3.0 layout) | 2.89 → 1.27 | 0.449 |
+| bidirectional | mean | 2.63 → 1.25 | 0.441 |
+
+Switching a causally pretrained decoder to bidirectional attention starts it from a much worse point (gradient
+norms 3-5x larger with the last-token readout) and it learns far more slowly, on Qwen3 as on Qwen3.5 and SmolLM2
+(v0.1, below). Bidirectional decoders need a long adaptation stage before they compete; keep `causal` otherwise.
+
 **Parity with the Decision 3.0 reference runtime.** `AutoDecisionModel.from_pretrained("vllm-sr/d3-edge")` against
 the checkpoint's own `trust_remote_code` runtime, BF16, four requests (choice, noul and score questions, an empty
 state, a JSON state, a 32-option choice): one question per forward pass, the probabilities are identical (maximum
