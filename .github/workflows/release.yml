@@ -1,0 +1,48 @@
+name: release
+
+# Publishes to PyPI with trusted publishing (no API tokens). Push a tag:
+#   placeholder-v0.0.1  -> the name-reservation package in packaging/pypi-placeholder
+#   v0.2.0              -> decisionformer itself (the tag must match the version in pyproject.toml)
+# One-time setup on pypi.org: add a (pending) trusted publisher for project `decisionformer`, owner
+# `FrontiersMindAI`, repository `decisionformer`, workflow `release.yml`, environment `pypi`.
+
+on:
+  push:
+    tags: ["v*", "placeholder-v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          if [[ "$GITHUB_REF_NAME" == placeholder-v* ]]; then
+            source=packaging/pypi-placeholder; version="${GITHUB_REF_NAME#placeholder-v}"
+          else
+            source=.; version="${GITHUB_REF_NAME#v}"
+          fi
+          python -m build "$source" --outdir dist
+          ls dist/*-"$version"-py3-none-any.whl || { echo "tag $GITHUB_REF_NAME does not match the package version"; exit 1; }
+          twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
