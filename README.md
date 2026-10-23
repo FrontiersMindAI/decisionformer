@@ -6,69 +6,59 @@ A decision model reads a *state* (text or any JSON value) and answers typed ques
 probability for every option, in a single forward pass and with no text generation. That makes it fast, cheap
 and easy to calibrate, which suits routing, moderation, classification, judging, entailment and extraction gates.
 
-DecisionFormer is to decision models what `transformers` is to language models. A request (`request.json`):
-
-```json
-{
-  "state": "The order arrived damaged yesterday. The customer has a receipt and asks for a replacement today.",
-  "questions": {
-    "route": {
-      "type": "choice",
-      "instructions": "Which team should handle this request?",
-      "criteria": {
-        "returns": "Refunds, replacements and damaged deliveries",
-        "billing": "Payments, invoices and charges",
-        "technical": "Product setup and faults"
-      }
-    },
-    "receipt": {
-      "type": "noul",
-      "instructions": "Does the customer have a receipt?"
-    },
-    "urgency": {
-      "type": "score",
-      "instructions": "How urgent is this request?",
-      "criteria": ["Routine", "Soon", "Today"]
-    }
-  }
-}
-```
+DecisionFormer is to decision models what `transformers` is to language models:
 
 ```python
-import json
 from decisionformer import AutoDecisionModel
 
 model = AutoDecisionModel.from_pretrained("vllm-sr/d3-edge")   # or your own fine-tune, local or on the Hub
-request = json.load(open("request.json"))
-response = model.decide(request["state"], request["questions"])
-```
 
-The response, one answer per question:
-
-```json
-{
-  "model": "vllm-sr/d3-edge",
-  "answers": {
-    "route": {
-      "type": "choice",
-      "choice": "returns",
-      "probabilities": {"returns": 0.9927, "billing": 0.0001, "technical": 0.0073},
-      "confidence": 0.9602
+response = model.decide(
+    state="The order arrived damaged yesterday. The customer has a receipt and asks for a replacement today.",
+    questions={
+        "route": {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": {
+                "returns": "Refunds, replacements and damaged deliveries",
+                "billing": "Payments, invoices and charges",
+                "technical": "Product setup and faults",
+            },
+        },
+        "receipt": {
+            "type": "noul",
+            "instructions": "Does the customer have a receipt?",
+        },
+        "urgency": {
+            "type": "score",
+            "instructions": "How urgent is this request?",
+            "criteria": ["Routine", "Soon", "Today"],
+        },
     },
-    "receipt": {
-      "type": "noul",
-      "noul": 0.9995
-    },
-    "urgency": {
-      "type": "score",
-      "score": 0.5777,
-      "probabilities": {"0": 0.5393, "1": 0.3438, "2": 0.1169},
-      "confidence": 0.1343,
-      "legend": {"0": "Routine", "1": "Soon", "2": "Today"}
-    }
-  },
-  "usage": {"input_tokens": 345, "output_tokens": 0}
-}
+)
+# {
+#   "model": "vllm-sr/d3-edge",
+#   "answers": {
+#     "route": {
+#       "type": "choice",
+#       "choice": "returns",
+#       "probabilities": {"returns": 0.9927, "billing": 0.0001, "technical": 0.0073},
+#       "confidence": 0.9602
+#     },
+#     "receipt": {
+#       "type": "noul",
+#       "noul": 0.9995
+#     },
+#     "urgency": {
+#       "type": "score",
+#       "score": 0.5777,
+#       "probabilities": {"0": 0.5393, "1": 0.3438, "2": 0.1169},
+#       "confidence": 0.1343,
+#       "legend": {"0": "Routine", "1": "Soon", "2": "Today"}
+#     }
+#   },
+#   "usage": {"input_tokens": 345, "output_tokens": 0}
+# }
 ```
 
 | | |
@@ -260,11 +250,16 @@ model.push_to_hub("my-org/my-decider")
 ```bash
 pip install -e ".[serve]"
 decisionformer serve my-org/my-decider --port 8000                  # transformers backend
-curl localhost:8000/v1/systemone -H 'content-type: application/json' -d @request.json
+curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
+  "state": "I was charged twice for my subscription this month.",
+  "questions": {
+    "angry": {"type": "noul", "instructions": "Is the customer angry?"}
+  }
+}'
 ```
 
-The server takes the request JSON shown at the top and returns the response JSON shown there, with `id`,
-`object` and `created` fields added, in the same shape as the other System One servers. It refuses over-long requests with HTTP 422 and the phrases the Decision Index counts as unsupported,
+The server takes the same `state` and `questions` as `decide` and returns the same response, with `id`, `object`
+and `created` fields added, in the same shape as the other System One servers. It refuses over-long requests with HTTP 422 and the phrases the Decision Index counts as unsupported,
 and it can require an API key: `--api-key-env MY_KEY_VAR` reads the key from that variable.
 
 **vLLM backend.** For code-readout checkpoints on a Qwen3.5 backbone (the Decision 3.0 contract), vLLM can
