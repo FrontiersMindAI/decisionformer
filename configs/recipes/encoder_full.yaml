@@ -1,6 +1,6 @@
 # Encoder baseline: full fine-tuning of ModernBERT on MNLI with a fixed label set.
 #   python examples/prepare_datasets.py mnli --output data/mnli --train-size 50000
-#   deciformer train configs/recipes/encoder_full.yaml
+#   decisionformer train configs/recipes/encoder_full.yaml
 base: ../base.yaml
 
 model:

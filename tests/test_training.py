@@ -11,8 +11,8 @@ import yaml
 from conftest import build_decoder, build_encoder, synthetic_records, write_jsonl
 from safetensors.torch import load_file
 
-from deciformer.config import load_config
-from deciformer.trainer import train
+from decisionformer.config import load_config
+from decisionformer.trainer import train
 
 pytestmark = pytest.mark.slow
 
@@ -80,7 +80,7 @@ def test_encoder_full_fixed_softmax_learns_and_reloads(model_root, data_dir, tmp
     assert (output / "best" / "model.safetensors").exists() and (output / "best" / "heads.safetensors").exists()
     assert (output / "predictions").exists()
 
-    from deciformer.cli import main
+    from decisionformer.cli import main
 
     predictions = tmp_path / "reloaded.jsonl"
     main(["eval", str(output / "last"), str(data_dir / "dev.jsonl"), "--predictions", str(predictions),
@@ -114,7 +114,7 @@ def test_decoder_attention_modes_with_lora(model_root, data_dir, tmp_path, atten
     train(config)
     output = Path(config.train.output_dir)
     assert _moved(output, build_decoder(model_root, "qwen3"))
-    from deciformer import AutoDecisionModel
+    from decisionformer import AutoDecisionModel
 
     assert not (output / "last" / "adapter").exists(), "LoRA exports are merged by default"
     loaded = AutoDecisionModel.from_pretrained(output / "last", device="cpu")
@@ -184,8 +184,8 @@ def test_eval_at_start_records_the_baseline(model_root, data_dir, tmp_path):
 def test_merged_export_matches_adapter(model_root, data_dir, tmp_path):
     import shutil
 
-    from deciformer import AutoDecisionModel
-    from deciformer.model import merge_checkpoint
+    from decisionformer import AutoDecisionModel
+    from decisionformer.model import merge_checkpoint
 
     config = make_config(tmp_path, build_decoder(model_root, "mistral"), data_dir, head={"type": "code_readout"},
                          extra={"finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}, "export": "adapter"}})
@@ -232,7 +232,7 @@ def test_pause_and_resume_is_exact(model_root, data_dir, tmp_path):
 
 
 def test_mntp_adaptation_then_bidirectional_training(model_root, data_dir, tmp_path):
-    from deciformer.adapt import adapt
+    from decisionformer.adapt import adapt
 
     config = make_config(tmp_path, build_decoder(model_root, "llama"), data_dir, head={"type": "option_scoring"},
                          out="adapt", steps=4,

@@ -10,14 +10,14 @@ import pytest
 import torch
 from conftest import COLORS, make_tokenizer
 
-from deciformer.config import HeadConfig, LossConfig, load_config
-from deciformer.data import plan_epoch
-from deciformer.formats import AUTOJEV, D3, get_format
-from deciformer.heads import BinaryHead, FixedSoftmaxHead, OrdinalHead
-from deciformer.losses import decision_loss
-from deciformer.metrics import compute_metrics, fit_temperature, paired_bootstrap, satisfies, softmax
-from deciformer.prompting import ContextLengthError, PromptBuilder, answer_codes, prepare_tokenizer
-from deciformer.schema import DecisionInputError, parse_question, parse_request
+from decisionformer.config import HeadConfig, LossConfig, load_config
+from decisionformer.data import plan_epoch
+from decisionformer.formats import AUTOJEV, D3, get_format
+from decisionformer.heads import BinaryHead, FixedSoftmaxHead, OrdinalHead
+from decisionformer.losses import decision_loss
+from decisionformer.metrics import compute_metrics, fit_temperature, paired_bootstrap, satisfies, softmax
+from decisionformer.prompting import ContextLengthError, PromptBuilder, answer_codes, prepare_tokenizer
+from decisionformer.schema import DecisionInputError, parse_question, parse_request
 
 # ---------------------------------------------------------------------------------------------------- schema
 
@@ -143,7 +143,7 @@ def test_config_inheritance_overrides_and_validation(tmp_path):
 
 
 def test_lora_presets():
-    from deciformer.finetune import lora_config_from
+    from decisionformer.finetune import lora_config_from
 
     config = lora_config_from({"target_modules": "attention", "rank_pattern": {"q_proj": 4}}, added_token_ids=[])
     assert "q_proj" in config.target_modules and config.rank_pattern == {"q_proj": 4}
@@ -195,7 +195,7 @@ def test_prompt_never_truncates_unless_asked():
 def test_request_files_read_jsonl_gz(tmp_path):
     import gzip
 
-    from deciformer.schema import load_decisions
+    from decisionformer.schema import load_decisions
 
     path = tmp_path / "rows.jsonl.gz"
     with gzip.open(path, "wt") as stream:
@@ -314,7 +314,7 @@ def test_shipped_recipes_validate(recipe):
 
 
 def test_selection_never_picks_non_finite_metrics():
-    from deciformer.metrics import is_improvement
+    from decisionformer.metrics import is_improvement
 
     assert not is_improvement({"accuracy": 0.9, "nll": float("nan")}, None, "accuracy", "max")
     assert not is_improvement({"accuracy": 0.9, "nll": float("inf")}, {"accuracy": 0.1, "nll": 1.0}, "accuracy", "max")

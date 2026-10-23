@@ -11,9 +11,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from deciformer.data import Collator, DecisionDataset, eval_batches
-from deciformer.metrics import compute_metrics, fit_temperature, softmax
-from deciformer.schema import QUESTION_TYPES, Decision
+from decisionformer.data import Collator, DecisionDataset, eval_batches
+from decisionformer.metrics import compute_metrics, fit_temperature, softmax
+from decisionformer.schema import QUESTION_TYPES, Decision
 
 
 def autocast(device: torch.device, mixed_precision: str) -> contextlib.AbstractContextManager[Any]:

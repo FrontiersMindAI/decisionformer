@@ -1,7 +1,7 @@
 """Decision Index engine: run any decision checkpoint through the Index kit in-process.
 
     pip install "decision-index @ git+https://github.com/apolinario/decision-index"
-    python -m decision_index pipeline --engine deciformer.integrations.decision_index:DeciformerEngine \\
+    python -m decision_index pipeline --engine decisionformer.integrations.decision_index:DecisionFormerEngine \\
         --option model=org/my-decider --out runs/my-decider
 
 In-process is the fastest path the maintainers can measure for the latency rule (median, mean and p80 at most
@@ -14,8 +14,8 @@ from typing import Any
 
 import torch
 
-from deciformer.api import Decider, UnsupportedInput
-from deciformer.prompting import ContextLengthError
+from decisionformer.api import Decider, UnsupportedInput
+from decisionformer.prompting import ContextLengthError
 
 try:  # the kit's own base classes when it is installed
     from decision_index.engines.base import Engine, Unsupported
@@ -45,8 +45,8 @@ except ImportError:  # pragma: no cover - same interface, so the engine also wor
 _DTYPES = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 
 
-class DeciformerEngine(Engine):
-    name = "deciformer"
+class DecisionFormerEngine(Engine):
+    name = "decisionformer"
     latency = ("Device-synchronized in-process request wall time including prompt construction; excludes model "
                "loading.")
 
@@ -56,7 +56,7 @@ class DeciformerEngine(Engine):
         self.decider = Decider.from_pretrained(model, revision=revision, device=device,
                                                dtype=_DTYPES[dtype] if dtype else None, batch_size=int(batch_size),
                                                max_length=int(max_length) if max_length else None)
-        self.provenance = {"kind": "deciformer", "repo": model, "revision": revision,
+        self.provenance = {"kind": "decisionformer", "repo": model, "revision": revision,
                            "prompt_format": self.decider.builder.format.name,
                            "attention_mode": self.decider.config.get("attention_mode", "causal"),
                            "max_input_tokens": self.decider.max_input_tokens,

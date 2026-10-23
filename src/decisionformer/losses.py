@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch.nn import functional as F
 
-from deciformer.config import LossConfig
+from decisionformer.config import LossConfig
 
 MASK_VALUE = -1e9  # finite, so 0 * log p stays 0 for padded options
 

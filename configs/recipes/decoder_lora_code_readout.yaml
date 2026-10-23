@@ -1,6 +1,6 @@
 # Causal decoder (default attention) with LoRA and the answer-code readout initialized from the LM head.
-#   deciformer train configs/recipes/decoder_lora_code_readout.yaml
-#   torchrun --nproc-per-node 8 -m deciformer train configs/recipes/decoder_lora_code_readout.yaml
+#   decisionformer train configs/recipes/decoder_lora_code_readout.yaml
+#   torchrun --nproc-per-node 8 -m decisionformer train configs/recipes/decoder_lora_code_readout.yaml
 base: ../base.yaml
 
 model:

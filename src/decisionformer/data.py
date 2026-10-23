@@ -10,8 +10,8 @@ from dataclasses import dataclass, field, fields
 
 import torch
 
-from deciformer.prompting import Encoded, PromptBuilder
-from deciformer.schema import Decision, load_decisions
+from decisionformer.prompting import Encoded, PromptBuilder
+from decisionformer.schema import Decision, load_decisions
 
 
 def _seed(*parts: object) -> int:
@@ -74,7 +74,7 @@ class DecisionDataset:
                 raise ValueError(f"No labeled questions in {paths}")
             dropped = len(decisions) - len(kept)
             if dropped:
-                logging.getLogger("deciformer").info("Skipped %d unlabeled questions in %s", dropped, paths)
+                logging.getLogger("decisionformer").info("Skipped %d unlabeled questions in %s", dropped, paths)
             decisions = kept
         return cls(decisions, builder)
 

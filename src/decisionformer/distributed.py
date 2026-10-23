@@ -31,7 +31,7 @@ def setup(backend: str = "auto", timeout_minutes: int = 30) -> DistributedState:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    use_cuda = torch.cuda.is_available() and os.environ.get("DECIFORMER_DEVICE", "") != "cpu"
+    use_cuda = torch.cuda.is_available() and os.environ.get("DECISIONFORMER_DEVICE", "") != "cpu"
     if use_cuda:
         index = local_rank % torch.cuda.device_count()
         torch.cuda.set_device(index)

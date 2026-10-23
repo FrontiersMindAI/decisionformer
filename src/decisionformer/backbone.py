@@ -11,8 +11,8 @@ from typing import Any
 import torch
 from torch import nn
 
-from deciformer.attention import apply_attention_mode, prefix_attention_mask, sliding_window_of
-from deciformer.finetune import unwrap_peft
+from decisionformer.attention import apply_attention_mode, prefix_attention_mask, sliding_window_of
+from decisionformer.finetune import unwrap_peft
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,21 @@ def load_tokenizer(name: str, revision: str | None = None, trust_remote_code: bo
 
     tokenizer = AutoTokenizer.from_pretrained(name, revision=revision, trust_remote_code=trust_remote_code)
     if not getattr(tokenizer, "is_fast", True):
-        raise ValueError("deciformer needs a fast tokenizer (offset mappings locate option spans)")
+        raise ValueError("decisionformer needs a fast tokenizer (offset mappings locate option spans)")
     return tokenizer
+
+
+def _encoder_of_seq2seq(config: Any) -> bool:
+    """True for encoder-decoder checkpoints (T5, mT5, UMT5) and their saved encoders (T5EncoderModel)."""
+    from transformers.models.auto.modeling_auto import MODEL_FOR_TEXT_ENCODING_MAPPING_NAMES
+
+    saved_encoder = any(str(a).endswith("EncoderModel") for a in getattr(config, "architectures", None) or [])
+    if not (getattr(config, "is_encoder_decoder", False) or saved_encoder):
+        return False
+    if config.model_type not in MODEL_FOR_TEXT_ENCODING_MAPPING_NAMES:
+        raise ValueError(f"{config.model_type} is an encoder-decoder model without a standalone text encoder in "
+                         "transformers; use an encoder (BERT, ModernBERT, DeBERTa, T5) or a decoder backbone")
+    return True
 
 
 def _drop_unused_pooler(model: nn.Module) -> None:
@@ -118,7 +131,7 @@ def load_backbone(model_cfg: Any, finetune_cfg: Any, *, kind: str, attention: st
             if quant.bits == 4 else BitsAndBytesConfig(load_in_8bit=True))
         kwargs["device_map"] = {"": device.index if device.type == "cuda" else str(device)}
     config = AutoConfig.from_pretrained(name, revision=revision, trust_remote_code=model_cfg.trust_remote_code)
-    loader = AutoModelForTextEncoding if kind == "encoder" and getattr(config, "is_encoder_decoder", False) else AutoModel
+    loader = AutoModelForTextEncoding if kind == "encoder" and _encoder_of_seq2seq(config) else AutoModel
     try:
         model = loader.from_pretrained(name, **kwargs)
     except (ValueError, ImportError) as error:

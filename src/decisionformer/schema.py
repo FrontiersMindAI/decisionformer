@@ -213,7 +213,7 @@ def read_records(path: str | Path) -> list[dict[str, Any]]:
         try:
             from datasets import load_dataset
         except ImportError as error:
-            raise ImportError("Reading 'hf:' datasets needs `pip install deciformer[data]`") from error
+            raise ImportError("Reading 'hf:' datasets needs `pip install decisionformer[data]`") from error
         parts = spec[3:].split(":")
         if len(parts) not in (2, 3):
             raise ValueError("Use hf:<name>:<split> or hf:<name>:<config>:<split>")

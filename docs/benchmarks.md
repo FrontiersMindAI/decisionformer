@@ -6,13 +6,13 @@ These runs are short (one epoch of 8,000 examples, 250 updates) and use a single
 each code path learns, not as tuned results.
 
 **Data.** Built with `python examples/prepare_datasets.py mnli --output data/mnli --train-size 8000`. The
-converter removed 356 training records whose premise also appears in `validation_matched`, and `deciformer data
+converter removed 356 training records whose premise also appears in `validation_matched`, and `decisionformer data
 check` then reported no cross-split overlap. Evaluation used the first 1,000 records of `dev.jsonl` and
 temperatures were fitted on the first 1,000 of `calibration.jsonl`. The two are separated by whole families.
 Chance accuracy is 0.33.
 
 **Configs.** `configs/benchmarks/mnli_8gb/`. Run from the repository root, for example
-`deciformer train configs/benchmarks/mnli_8gb/e2_qwen3_lora_code.yaml`.
+`decisionformer train configs/benchmarks/mnli_8gb/e2_qwen3_lora_code.yaml`.
 
 ## Results
 
@@ -70,4 +70,4 @@ on CUDA with an fp32 eager reference, and fits a linear probe on frozen features
   causal mode. Prefer bf16 or fp32 for them.
 
 Recommendation: keep `attention: causal` (the default) unless you can afford a long adaptation stage, and
-compare against the causal baseline with `deciformer compare` before adopting a bidirectional model.
+compare against the causal baseline with `decisionformer compare` before adopting a bidirectional model.

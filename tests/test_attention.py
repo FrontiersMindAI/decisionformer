@@ -8,8 +8,8 @@ import pytest
 import torch
 from conftest import DECODERS, build_decoder
 
-from deciformer.attention import apply_attention_mode, check_supported, prefix_attention_mask
-from deciformer.backbone import Backbone
+from decisionformer.attention import apply_attention_mode, check_supported, prefix_attention_mask
+from decisionformer.backbone import Backbone
 
 IMPLEMENTATIONS = ["sdpa", "eager"]
 LENGTH = 12

@@ -8,8 +8,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from deciformer.formats import PromptFormat, describe, get_format
-from deciformer.schema import Decision
+from decisionformer.formats import PromptFormat, describe, get_format
+from decisionformer.schema import Decision
 
 MAX_CODES = 255
 _CODE_PROBE = "Choose an option."
@@ -155,7 +155,7 @@ class PromptBuilder:
             text = _chat(self.tokenizer, messages, self.chat_template_kwargs)
             start = text.find(user)
             if start < 0:
-                raise ValueError("The chat template changed the user message; deciformer cannot locate option spans")
+                raise ValueError("The chat template changed the user message; decisionformer cannot locate option spans")
             encoding = self.tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
         else:
             text, start = user + _PLAIN_SUFFIX, 0

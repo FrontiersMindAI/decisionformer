@@ -3,7 +3,7 @@
 A decision checkpoint only works with the prompt it was trained on, byte for byte. A format names that prompt:
 
 * `d3`: the Decision 3.0 code-readout prompt (`vllm-sr/d3*`). vLLM serves `d3` checkpoints with Qwen3.5
-  backbones natively on `/v1/systemone`. This is deciformer's default.
+  backbones natively on `/v1/systemone`. This is decisionformer's default.
 * `autojev`: the AutoJev prompt (AutoJev-27B, FrontiersMind/Lumma-fev-27B and other AutoJev exports).
 
 Both share one layout (state, question, coded options, closing line) and differ in wording. Register more
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from deciformer.schema import Question
+from decisionformer.schema import Question
 
 
 def describe(value: Any) -> str:
@@ -126,7 +126,7 @@ def get_format(name: str) -> PromptFormat:
         return FORMATS[name]
     except KeyError:
         raise ValueError(f"Unknown prompt format {name!r}. Known: {sorted(FORMATS)}. A checkpoint trained on "
-                         "another prompt needs that prompt registered with deciformer.register_format.") from None
+                         "another prompt needs that prompt registered with decisionformer.register_format.") from None
 
 
 D3 = register_format(PromptFormat(

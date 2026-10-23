@@ -9,8 +9,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from deciformer.config import HeadConfig
-from deciformer.registry import HEADS
+from decisionformer.config import HeadConfig
+from decisionformer.registry import HEADS
 
 _INTERNAL_ARGUMENTS = {"self", "hidden_size", "max_options", "code_rows"}
 

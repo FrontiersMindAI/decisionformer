@@ -1,6 +1,6 @@
 """Load decision checkpoints and answer System One requests: `AutoDecisionModel.from_pretrained(...).decide(...)`.
 
-Any checkpoint in the shared decision layout loads here: deciformer exports, AutoJev exports (for example
+Any checkpoint in the shared decision layout loads here: decisionformer exports, AutoJev exports (for example
 FrontiersMind/Lumma-fev-27B) and Decision 3.0 checkpoints (`vllm-sr/d3*`). The prompt format is read from
 `decision_config.json`; checkpoints trained on other prompts need their format registered first.
 """
@@ -17,16 +17,16 @@ from typing import Any
 
 import torch
 
-from deciformer.attention import resolve_mode
-from deciformer.backbone import Backbone, context_limit, load_backbone, resolve_kind
-from deciformer.config import HeadConfig, PoolerConfig
-from deciformer.data import make_batch, split_micro_batches
-from deciformer.formats import get_format
-from deciformer.heads import CodeReadoutHead, build_head
-from deciformer.model import DECISION_CONFIG, HEADS, READOUT, DecisionModel, model_card
-from deciformer.poolers import build_pooler
-from deciformer.prompting import ContextLengthError, PromptBuilder, prepare_tokenizer
-from deciformer.schema import Decision, DecisionInputError, parse_questions
+from decisionformer.attention import resolve_mode
+from decisionformer.backbone import Backbone, context_limit, load_backbone, resolve_kind
+from decisionformer.config import HeadConfig, PoolerConfig
+from decisionformer.data import make_batch, split_micro_batches
+from decisionformer.formats import get_format
+from decisionformer.heads import CodeReadoutHead, build_head
+from decisionformer.model import DECISION_CONFIG, HEADS, READOUT, DecisionModel, model_card
+from decisionformer.poolers import build_pooler
+from decisionformer.prompting import ContextLengthError, Encoded, PromptBuilder, prepare_tokenizer
+from decisionformer.schema import Decision, DecisionInputError, parse_questions
 
 
 class UnsupportedInput(ValueError):
@@ -86,9 +86,9 @@ class Decider:
         config_file = root / DECISION_CONFIG
         if not config_file.is_file():
             raise ValueError(f"{name_or_path} is not a decision checkpoint (no {DECISION_CONFIG}). Train one with "
-                             "`deciformer train`, or evaluate a stock model zero-shot with an lm_verbalizer head.")
+                             "`decisionformer train`, or evaluate a stock model zero-shot with an lm_verbalizer head.")
         config = json.loads(config_file.read_text())
-        ext = config.get("deciformer") or {}
+        ext = config.get("decisionformer") or {}
         style = get_format(prompt or _prompt_name(config))
         device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         dtype = dtype or _default_dtype(device)
@@ -150,7 +150,7 @@ class Decider:
         owners: list[int] = []
         for number, request in enumerate(requests):
             if request.get("images") or _has_image_parts(request.get("state")):
-                raise UnsupportedInput("image inputs are not supported by deciformer models yet")
+                raise UnsupportedInput("image inputs are not supported by decisionformer models yet")
             for question in parse_questions(request.get("questions")):
                 if question.num_options > len(self.builder.codes):
                     raise ContextLengthError(f"question {question.key!r} has {question.num_options} options; this "
@@ -159,22 +159,26 @@ class Decider:
                                           question=question, task=question.task or "default"))
                 owners.append(number)
         encoded = [self.builder.encode(d, max_length=self.max_input_tokens) for d in decisions]
+        responses = [{"model": self.name, "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
+                     for _ in requests]
+        for decision, owner, item, logits in zip(decisions, owners, encoded, self.code_logits(decisions, encoded)):
+            scaled = logits[:decision.num_options].float() / self.temperature_for(decision.question_type)
+            responses[owner]["answers"][decision.question.key] = self.builder.format.answer(
+                decision.question, scaled.softmax(-1).tolist())
+            responses[owner]["usage"]["input_tokens"] += len(item.input_ids)
+        return responses
+
+    def code_logits(self, decisions: list[Decision], encoded: list[Encoded]) -> list[torch.Tensor]:
+        """One row of raw answer-code logits per decision (before temperature)."""
         lengths = [len(e.input_ids) for e in encoded]
-        probabilities: list[list[float]] = [[] for _ in decisions]
+        rows: list[torch.Tensor] = [torch.empty(0)] * len(decisions)
         for group in split_micro_batches(range(len(decisions)), lengths, self.batch_size, self.batch_tokens):
             batch = make_batch([decisions[i] for i in group], [list(range(decisions[i].num_options)) for i in group],
                                [encoded[i] for i in group], self.tokenizer.pad_token_id).to(self.device)
             logits = self.model(batch).float()
             for row, index in enumerate(group):
-                decision = decisions[index]
-                scaled = logits[row, :decision.num_options] / self.temperature_for(decision.question_type)
-                probabilities[index] = scaled.softmax(-1).tolist()
-        responses = [{"model": self.name, "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0}}
-                     for _ in requests]
-        for decision, owner, probs, length in zip(decisions, owners, probabilities, lengths):
-            responses[owner]["answers"][decision.question.key] = self.builder.format.answer(decision.question, probs)
-            responses[owner]["usage"]["input_tokens"] += length
-        return responses
+                rows[index] = logits[row]
+        return rows
 
     __call__ = decide
 
@@ -192,7 +196,7 @@ class Decider:
 
     def push_to_hub(self, repo_id: str, *, private: bool = True, token: str | None = None,
                     commit_message: str = "Upload decision model") -> str:
-        from deciformer.hub import push_folder
+        from decisionformer.hub import push_folder
 
         with tempfile.TemporaryDirectory() as tmp:
             folder = self.save_pretrained(Path(tmp) / "checkpoint")
@@ -211,7 +215,7 @@ def _model_from_heads(root: Path, ext: dict[str, Any], backbone: Backbone, num_c
     from safetensors.torch import load_file
 
     if not ext.get("heads"):
-        raise ValueError(f"{root}: no {READOUT} and no deciformer heads; cannot build the decision head")
+        raise ValueError(f"{root}: no {READOUT} and no decisionformer heads; cannot build the decision head")
     poolers = {key: build_pooler(PoolerConfig(**cfg), backbone.hidden_size) for key, cfg in ext["poolers"].items()}
     heads = {name: build_head(HeadConfig(**cfg), backbone.hidden_size, num_codes, None)
              for name, cfg in ext["heads"].items()}

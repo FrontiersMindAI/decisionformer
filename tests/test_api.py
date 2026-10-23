@@ -12,10 +12,10 @@ from conftest import COLORS, SIZES, build_decoder, make_tokenizer
 from safetensors.torch import save_file
 from test_training import make_config
 
-from deciformer import AutoDecisionModel, ContextLengthError, UnsupportedInput
-from deciformer.formats import AUTOJEV, D3
-from deciformer.prompting import answer_codes, prepare_tokenizer
-from deciformer.trainer import train
+from decisionformer import AutoDecisionModel, ContextLengthError, UnsupportedInput
+from decisionformer.formats import AUTOJEV, D3
+from decisionformer.prompting import answer_codes, prepare_tokenizer
+from decisionformer.trainer import train
 
 pytestmark = pytest.mark.slow
 
@@ -76,7 +76,7 @@ def test_loaded_model_reproduces_training_predictions(trained):
     """The exported model, reloaded, gives the calibrated probabilities the trainer recorded at the best step."""
     from conftest import multi_records
 
-    step = json.loads((trained / "best" / "decision_config.json").read_text())["deciformer"]["metrics"]["step"]
+    step = json.loads((trained / "best" / "decision_config.json").read_text())["decisionformer"]["metrics"]["step"]
     recorded: dict[str, dict] = {}
     for line in (trained / "predictions" / f"dev-step{step:06d}.jsonl").read_text().splitlines():
         row = json.loads(line)
@@ -121,7 +121,7 @@ def _manual_probabilities(path: Path, fmt, state: str, question: dict, readout: 
                           temperature: float, noncausal: bool) -> list[float]:
     from transformers import AutoModel, AutoTokenizer
 
-    from deciformer.schema import parse_question
+    from decisionformer.schema import parse_question
 
     tokenizer = AutoTokenizer.from_pretrained(str(path))  # the checkpoint's tokenizer, as transformers loads it
     parsed = parse_question("q", question)
@@ -169,7 +169,7 @@ def test_refusals_never_truncate(trained):
 def test_systemone_server(trained):
     from fastapi.testclient import TestClient
 
-    from deciformer.serve import create_app
+    from decisionformer.serve import create_app
 
     model = AutoDecisionModel.from_pretrained(trained / "best", device="cpu", dtype=torch.float32, max_length=200)
     client = TestClient(create_app(model))
@@ -188,9 +188,9 @@ def test_systemone_server(trained):
 
 
 def test_decision_index_engine(trained):
-    from deciformer.integrations.decision_index import DeciformerEngine, Unsupported
+    from decisionformer.integrations.decision_index import DecisionFormerEngine, Unsupported
 
-    engine = DeciformerEngine(model=str(trained / "best"), device="cpu", dtype="float32", max_length="96")
+    engine = DecisionFormerEngine(model=str(trained / "best"), device="cpu", dtype="float32", max_length="96")
     choice_and_noul = {k: v for k, v in QUESTIONS.items() if v["type"] != "score"}
     response, raw = engine("the medium circle is blue .", choice_and_noul)
     index_validate(choice_and_noul, response)
@@ -200,7 +200,7 @@ def test_decision_index_engine(trained):
 
 
 def test_predict_and_eval_commands(trained, data_dir, tmp_path, capsys):
-    from deciformer.cli import main
+    from decisionformer.cli import main
 
     requests = tmp_path / "requests.jsonl"
     requests.write_text(json.dumps({"id": "r1", "state": "the small circle is red .", "questions": QUESTIONS}) + "\n")

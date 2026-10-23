@@ -8,8 +8,8 @@ from typing import Any
 import torch
 from torch import nn
 
-from deciformer.config import PoolerConfig
-from deciformer.registry import POOLERS
+from decisionformer.config import PoolerConfig
+from decisionformer.registry import POOLERS
 
 
 class Pooler(nn.Module):

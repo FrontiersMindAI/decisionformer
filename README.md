@@ -1,4 +1,4 @@
-# deciformer
+# decisionformer
 
 **Fine-tune any Hugging Face encoder or decoder into a calibrated, one-pass decision model.**
 
@@ -6,7 +6,7 @@ A decision model reads a *state* (some text) and a *question* with a set of *opt
 for every option in a single forward pass, with no text generation. That makes it fast, cheap and easy to
 calibrate, which suits routing, moderation, classification, judging, entailment and extraction gates.
 
-deciformer turns any `transformers` backbone into one, and everything is chosen in a YAML config:
+decisionformer turns any `transformers` backbone into one, and everything is chosen in a YAML config:
 
 | | |
 |---|---|
@@ -30,17 +30,17 @@ pip install -e ".[data]"    # adds datasets for the example converters and hf: i
 
 ```bash
 python examples/prepare_datasets.py mnli --output data/mnli --train-size 20000
-deciformer train configs/recipes/decoder_lora_code_readout.yaml
-deciformer eval runs/qwen3-0.6b-lora-code/best data/mnli/dev.jsonl --predictions dev.predictions.jsonl
+decisionformer train configs/recipes/decoder_lora_code_readout.yaml
+decisionformer eval runs/qwen3-0.6b-lora-code/best data/mnli/dev.jsonl --predictions dev.predictions.jsonl
 ```
 
 Multi-GPU uses the same config with `torchrun`:
 
 ```bash
-torchrun --nproc-per-node 8 -m deciformer train configs/recipes/decoder_lora_code_readout.yaml train.lr=1e-4
+torchrun --nproc-per-node 8 -m decisionformer train configs/recipes/decoder_lora_code_readout.yaml train.lr=1e-4
 ```
 
-Any config value can be overridden on the command line with dotted keys, as above. `deciformer config FILE`
+Any config value can be overridden on the command line with dotted keys, as above. `decisionformer config FILE`
 prints the fully resolved configuration.
 
 ## Data format
@@ -65,7 +65,7 @@ that splits, data checks and bootstrap intervals keep them together.
   the loss. `teacher` is optional and holds probabilities to distill from (`train.loss.distill_alpha`).
 * `state` can be a string or any JSON value. AutoJev-style records (`criteria`, `noul`) are accepted as-is.
 
-`deciformer data check test=data/test.jsonl dev=data/dev.jsonl train=data/train.jsonl` reports duplicate ids,
+`decisionformer data check test=data/test.jsonl dev=data/dev.jsonl train=data/train.jsonl` reports duplicate ids,
 families or identical states that cross splits, near-duplicate states, and label balance. It exits non-zero if
 it finds leakage.
 
@@ -115,7 +115,7 @@ are causal by construction, so non-causal modes refuse those models instead of s
 **Bidirectional decoders need real adaptation.** The mode is verified correct, but making a causally pretrained
 decoder bidirectional removes most of the task information from its features. On MNLI, Qwen3-0.6B's
 linear-probe accuracy fell from 0.68 to 0.44, and bidirectional fine-tuning of SmolLM2-360M stayed at chance
-where the causal model reached 0.80 (`docs/benchmarks.md`). `deciformer adapt` runs masked next-token prediction
+where the causal model reached 0.80 (`docs/benchmarks.md`). `decisionformer adapt` runs masked next-token prediction
 (as in LLM2Vec) and saves a checkpoint you can use as `model.backbone` (`configs/recipes/adapt_mntp.yaml`), but a
 short stage of 150 steps was not enough in our tests. Keep `causal` unless you can afford a long adaptation
 stage, compare against the causal baseline, and prefer bf16 or fp32: fp16 diverged in both bidirectional and
@@ -140,7 +140,7 @@ finetune:
     layers_to_transform: null
     rank_pattern: {q_proj: 32}
     alpha_pattern: {}
-    trainable_token_indices: auto  # auto = rows of any tokens deciformer adds (e.g. prompt.marker_token)
+    trainable_token_indices: auto  # auto = rows of any tokens decisionformer adds (e.g. prompt.marker_token)
     modules_to_save: []
   quantization: {bits: 4, quant_type: nf4, double_quant: true, compute_dtype: bfloat16}  # qlora only
   export: adapter          # adapter (small) | merged (full weights, no peft needed to serve)
@@ -194,16 +194,16 @@ runs/<name>/
   metrics.jsonl      train and eval events
   predictions/       per-example predictions at every evaluation
   checkpoints/       resumable training state
-  best/  last/       self-contained exported models (deciformer eval / predict / load_decision_model)
+  best/  last/       self-contained exported models (decisionformer eval / predict / load_decision_model)
   summary.json
 ```
 
 ```python
-from deciformer.model import load_decision_model
+from decisionformer.model import load_decision_model
 model = load_decision_model("runs/x/best", device="cuda")
 ```
 
-`deciformer compare a.jsonl b.jsonl` gives a paired bootstrap over families for accuracy, ECE, Brier and NLL.
+`decisionformer compare a.jsonl b.jsonl` gives a paired bootstrap over families for accuracy, ECE, Brier and NLL.
 
 ## Development
 

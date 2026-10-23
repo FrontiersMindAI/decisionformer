@@ -1,4 +1,4 @@
-"""deciformer command line: train, eval, predict, serve, push, compare, data check, config (adapt: experimental)."""
+"""decisionformer command line: train, eval, predict, serve, push, compare, data check, config (adapt: experimental)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 
 
 def _train(args: argparse.Namespace) -> None:
-    from deciformer.config import load_config
-    from deciformer.trainer import train
+    from decisionformer.config import load_config
+    from decisionformer.trainer import train
 
     summary = train(load_config(args.config, args.overrides))
     if summary:
@@ -19,20 +19,20 @@ def _train(args: argparse.Namespace) -> None:
 
 
 def _adapt(args: argparse.Namespace) -> None:
-    from deciformer.adapt import adapt
-    from deciformer.config import load_config
+    from decisionformer.adapt import adapt
+    from decisionformer.config import load_config
 
     print(adapt(load_config(args.config, args.overrides, validate_components=False)))
 
 
 def _config(args: argparse.Namespace) -> None:
-    from deciformer.config import dump_config, load_config
+    from decisionformer.config import dump_config, load_config
 
     print(dump_config(load_config(args.config, args.overrides)))
 
 
 def _load(args: argparse.Namespace) -> Any:
-    from deciformer.api import Decider
+    from decisionformer.api import Decider
 
     return Decider.from_pretrained(args.model, device=args.device, batch_size=args.batch_size,
                                    max_length=args.max_length, revision=args.revision)
@@ -47,8 +47,8 @@ def _write(lines: list[str], path: str | None) -> None:
 
 
 def _eval(args: argparse.Namespace) -> None:
-    from deciformer.data import Collator, DecisionDataset
-    from deciformer.inference import (
+    from decisionformer.data import Collator, DecisionDataset
+    from decisionformer.inference import (
         collect_logits,
         fit_type_temperatures,
         grouped_metrics,
@@ -76,7 +76,7 @@ def _eval(args: argparse.Namespace) -> None:
 
 
 def _predict(args: argparse.Namespace) -> None:
-    from deciformer.schema import read_records
+    from decisionformer.schema import read_records
 
     decider = _load(args)
     lines = []
@@ -87,20 +87,25 @@ def _predict(args: argparse.Namespace) -> None:
 
 
 def _serve(args: argparse.Namespace) -> None:
-    from deciformer.serve import serve
+    from decisionformer.serve import serve
+    from decisionformer.vllm_backend import UnsupportedBackend
 
-    serve(args.model, host=args.host, port=args.port, device=args.device, api_key_env=args.api_key_env,
-          batch_size=args.batch_size, max_length=args.max_length, revision=args.revision)
+    try:
+        serve(args.model, host=args.host, port=args.port, device=args.device, backend=args.backend,
+              api_key_env=args.api_key_env, batch_size=args.batch_size, max_length=args.max_length,
+              revision=args.revision)
+    except UnsupportedBackend as error:
+        raise SystemExit(f"error: {error}") from None
 
 
 def _push(args: argparse.Namespace) -> None:
-    from deciformer.hub import push_folder
+    from decisionformer.hub import push_folder
 
     print(push_folder(args.checkpoint, args.repo_id, private=not args.public))
 
 
 def _compare(args: argparse.Namespace) -> None:
-    from deciformer.metrics import paired_bootstrap
+    from decisionformer.metrics import paired_bootstrap
 
     def read(path: str) -> list[dict[str, Any]]:
         return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
@@ -110,7 +115,7 @@ def _compare(args: argparse.Namespace) -> None:
 
 
 def _data_check(args: argparse.Namespace) -> None:
-    from deciformer.datacheck import check_splits
+    from decisionformer.datacheck import check_splits
 
     splits = {}
     for item in args.splits:
@@ -133,7 +138,7 @@ def _model_options(command: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="deciformer", description=__doc__)
+    parser = argparse.ArgumentParser(prog="decisionformer", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     for name, handler, help_text in (("train", _train, "Fine-tune a decision model (torchrun for multi-GPU)"),
@@ -163,7 +168,9 @@ def build_parser() -> argparse.ArgumentParser:
     _model_options(serve)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
-    serve.add_argument("--api-key-env", default="DECIFORMER_API_KEY",
+    serve.add_argument("--backend", choices=("transformers", "vllm"), default="transformers",
+                       help="vllm: vLLM computes the readout (Qwen3.5/3.8 code-readout checkpoints only)")
+    serve.add_argument("--api-key-env", default="DECISIONFORMER_API_KEY",
                        help="require `Authorization: Bearer <key>` when this variable is set")
     serve.set_defaults(handler=_serve)
 

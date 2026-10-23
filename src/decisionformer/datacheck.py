@@ -7,8 +7,8 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
-from deciformer.formats import describe
-from deciformer.schema import Decision, load_decisions
+from decisionformer.formats import describe
+from decisionformer.schema import Decision, load_decisions
 
 
 def _normalized(text: str) -> str:

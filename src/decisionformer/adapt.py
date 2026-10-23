@@ -18,17 +18,17 @@ import torch
 from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel
 
-from deciformer import distributed as dist_utils
-from deciformer.attention import apply_attention_mode
-from deciformer.backbone import load_tokenizer
-from deciformer.config import RunConfig
-from deciformer.data import _seed, plan_epoch
-from deciformer.finetune import count_parameters, is_peft, prepare_for_finetuning, resolve_dtype
-from deciformer.inference import autocast
-from deciformer.optim import lr_lambda
-from deciformer.schema import read_records
+from decisionformer import distributed as dist_utils
+from decisionformer.attention import apply_attention_mode
+from decisionformer.backbone import load_tokenizer
+from decisionformer.config import RunConfig
+from decisionformer.data import _seed, plan_epoch
+from decisionformer.finetune import count_parameters, is_peft, prepare_for_finetuning, resolve_dtype
+from decisionformer.inference import autocast
+from decisionformer.optim import lr_lambda
+from decisionformer.schema import read_records
 
-logger = logging.getLogger("deciformer.adapt")
+logger = logging.getLogger("decisionformer.adapt")
 
 
 def _texts(config: RunConfig) -> list[str]:

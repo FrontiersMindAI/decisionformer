@@ -23,7 +23,7 @@ DECODERS = ["llama", "mistral", "qwen2", "qwen3", "gemma", "gemma2", "gemma3_tex
 
 
 def _corpus() -> list[str]:
-    from deciformer.formats import FORMATS
+    from decisionformer.formats import FORMATS
 
     lines = [text for fmt in FORMATS.values() for text in (fmt.system, fmt.closing, fmt.default_instructions,
                                                           *fmt.noul_descriptions, fmt.empty_state or "")]
@@ -185,3 +185,65 @@ def data_dir(tmp_path_factory) -> Path:
     write_jsonl(root / "multi_dev.jsonl", multi_records(16, 6))
     write_jsonl(root / "multi_calibration.jsonl", multi_records(16, 7))
     return root
+
+
+# The model zoo: tiny configs of every family test_zoo.py trains, exports, reloads and serves.
+_TINY = dict(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4,
+             max_position_embeddings=512, pad_token_id=0)
+ZOO_ENCODERS = {
+    "bert": {}, "roberta": {}, "xlm-roberta": {}, "electra": {"embedding_size": 32}, "albert": {"embedding_size": 16},
+    "deberta": {}, "deberta-v2": {}, "distilbert": {"dim": 32, "hidden_dim": 64, "n_layers": 2, "n_heads": 4},
+    "modernbert": {"global_attn_every_n_layers": 1, "cls_token_id": 2, "sep_token_id": 3, "bos_token_id": 2,
+                   "eos_token_id": 3},
+    "eurobert": {"num_key_value_heads": 4},
+    "t5": {"d_model": 32, "d_kv": 8, "d_ff": 64, "num_layers": 2, "num_heads": 4, "decoder_start_token_id": 0},
+    "mt5": {"d_model": 32, "d_kv": 8, "d_ff": 64, "num_layers": 2, "num_heads": 4, "decoder_start_token_id": 0},
+}
+_MOE = {"num_local_experts": 4, "num_experts_per_tok": 2}
+ZOO_DECODERS = {
+    **{name: {} for name in ("llama", "mistral", "ministral", "qwen2", "qwen3", "gemma", "gemma2", "gemma3_text",
+                             "phi3", "phi", "granite", "olmo2", "smollm3", "glm4", "stablelm", "gpt_neox", "cohere2",
+                             "exaone4", "seed_oss", "hunyuan_v1_dense")},
+    "gpt2": {"n_embd": 32, "n_layer": 2, "n_head": 4, "n_positions": 512},
+    "falcon": {"new_decoder_architecture": False, "multi_query": False},
+    "gemma4_text": {"layer_types": ["sliding_attention", "full_attention"], "sliding_window": 64},
+    # mixture of experts
+    "mixtral": _MOE, "granitemoe": _MOE, "phimoe": _MOE, "llama4_text": {"num_local_experts": 4},
+    "qwen3_moe": {"num_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 32, "decoder_sparse_step": 1},
+    "olmoe": {"num_experts": 4, "num_experts_per_tok": 2},
+    "gpt_oss": {**_MOE, "layer_types": ["sliding_attention", "full_attention"], "sliding_window": 64},
+    "deepseek_v3": {"n_routed_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 32,
+                    "first_k_dense_replace": 1, "kv_lora_rank": 16, "q_lora_rank": 16, "qk_rope_head_dim": 8,
+                    "qk_nope_head_dim": 8, "v_head_dim": 8, "n_group": 1, "topk_group": 1},
+    # hybrid linear attention (Gated DeltaNet) + full attention
+    "qwen3_next": {"num_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 32,
+                   "shared_expert_intermediate_size": 32, "linear_num_value_heads": 4, "linear_num_key_heads": 2,
+                   "linear_key_head_dim": 8, "linear_value_head_dim": 8,
+                   "layer_types": ["linear_attention", "full_attention"]},
+}
+
+
+def build_zoo_model(root: Path, model_type: str) -> Path:
+    """A tiny random checkpoint of `model_type` saved the way it ships (MLM / causal-LM / seq2seq head included)."""
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForMaskedLM, AutoModelForSeq2SeqLM
+
+    if model_type == "qwen3_5":
+        return build_decoder(root, model_type)
+    path = root / f"zoo-{model_type}"
+    if path.exists():
+        return path
+    encoder = model_type in ZOO_ENCODERS
+    tokenizer = make_tokenizer("encoder" if encoder else "decoder")
+    kwargs = dict(_TINY, vocab_size=len(tokenizer), **(ZOO_ENCODERS if encoder else ZOO_DECODERS)[model_type])
+    if not encoder:
+        kwargs.update(num_key_value_heads=2, eos_token_id=SPECIALS.index("<|end|>"), bos_token_id=None,
+                      tie_word_embeddings=True, **({} if model_type == "falcon" else {"head_dim": 8}))
+    torch.manual_seed(0)
+    config = AutoConfig.for_model(model_type, **kwargs)
+    if getattr(config, "is_encoder_decoder", False):
+        model = AutoModelForSeq2SeqLM.from_config(config)
+    else:
+        model = (AutoModelForMaskedLM if encoder else AutoModelForCausalLM).from_config(config)
+    model.save_pretrained(str(path))
+    tokenizer.save_pretrained(str(path))
+    return path

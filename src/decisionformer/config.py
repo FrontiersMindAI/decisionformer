@@ -64,7 +64,7 @@ class ModelConfig(_Strict):
 
 
 class PromptConfig(_Strict):
-    """`style` names a registered prompt format (deciformer.formats): `d3` (default, vLLM-servable) or `autojev`."""
+    """`style` names a registered prompt format (decisionformer.formats): `d3` (default, vLLM-servable) or `autojev`."""
 
     style: str = "d3"
     chat_template_kwargs: dict[str, Any] = Field(default_factory=lambda: {"enable_thinking": False})
@@ -224,10 +224,10 @@ def load_config(path: str | Path, overrides: list[str] | None = None, *, validat
 
 def validate_components_of(config: RunConfig) -> None:
     """Fail at load time for unknown poolers/heads, bad head arguments, or invalid LoRA settings."""
-    from deciformer.finetune import lora_config_from
-    from deciformer.formats import get_format
-    from deciformer.heads import validate_head_config
-    from deciformer.poolers import validate_pooler_config
+    from decisionformer.finetune import lora_config_from
+    from decisionformer.formats import get_format
+    from decisionformer.heads import validate_head_config
+    from decisionformer.poolers import validate_pooler_config
 
     get_format(config.data.prompt.style)
     validate_pooler_config(config.model.pooler)

@@ -16,11 +16,11 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel
 
-from deciformer import distributed as dist_utils
-from deciformer.config import RunConfig, dump_config
-from deciformer.data import Collator, DecisionDataset, plan_epoch
-from deciformer.finetune import count_parameters
-from deciformer.inference import (
+from decisionformer import distributed as dist_utils
+from decisionformer.config import RunConfig, dump_config
+from decisionformer.data import Collator, DecisionDataset, plan_epoch
+from decisionformer.finetune import count_parameters
+from decisionformer.inference import (
     autocast,
     collect_logits,
     fit_type_temperatures,
@@ -30,12 +30,12 @@ from deciformer.inference import (
     shard,
     temperature_for,
 )
-from deciformer.losses import decision_loss
-from deciformer.metrics import is_improvement, satisfies
-from deciformer.model import BuildResult, build_model, export_checkpoint, merge_checkpoint
-from deciformer.optim import build_optimizer, lr_lambda
+from decisionformer.losses import decision_loss
+from decisionformer.metrics import is_improvement, satisfies
+from decisionformer.model import BuildResult, build_model, export_checkpoint, merge_checkpoint
+from decisionformer.optim import build_optimizer, lr_lambda
 
-logger = logging.getLogger("deciformer")
+logger = logging.getLogger("decisionformer")
 
 
 def _setup_logging(is_main: bool) -> None:
@@ -356,7 +356,7 @@ class Trainer:
             summary = {"steps": self.step, "complete": self.step == self.total_steps, "best_step": self.best_step,
                        "best": self.best, "temperatures": self.temperatures, "output_dir": str(self.output)}
             if config.train.push_to_hub and (self.output / "best").exists():
-                from deciformer.hub import push_folder
+                from decisionformer.hub import push_folder
 
                 summary["hub_url"] = push_folder(self.output / "best", config.train.push_to_hub,
                                                  private=config.train.hub_private)

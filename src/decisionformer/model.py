@@ -3,7 +3,7 @@
 Exports follow the decision-checkpoint convention shared by AutoJev, Decision 3.0 (vLLM), pplx-decider and
 others: the backbone's own `config.json` and weights at the repository root, the tokenizer, a
 `decision_config.json`, and a 255-row answer-code readout in `readout.safetensors`. Models with other heads
-add `heads.safetensors` and describe them in the `deciformer` section of `decision_config.json`.
+add `heads.safetensors` and describe them in the `decisionformer` section of `decision_config.json`.
 """
 
 from __future__ import annotations
@@ -20,15 +20,15 @@ import torch
 from safetensors.torch import save_file
 from torch import nn
 
-from deciformer import __version__
-from deciformer.attention import CHECKPOINT_NAMES, resolve_mode
-from deciformer.backbone import Backbone, context_limit, load_backbone, load_tokenizer, resolve_kind
-from deciformer.config import PoolerConfig, RunConfig
-from deciformer.finetune import is_peft, prepare_for_finetuning, resolve_dtype, unwrap_peft
-from deciformer.heads import CodeReadoutHead, Head, build_head, head_class
-from deciformer.losses import MASK_VALUE, masked_logits
-from deciformer.poolers import Pooler, build_pooler, default_pooler_type
-from deciformer.prompting import PromptBuilder, prepare_tokenizer
+from decisionformer import __version__
+from decisionformer.attention import CHECKPOINT_NAMES, resolve_mode
+from decisionformer.backbone import Backbone, context_limit, load_backbone, load_tokenizer, resolve_kind
+from decisionformer.config import PoolerConfig, RunConfig
+from decisionformer.finetune import is_peft, prepare_for_finetuning, resolve_dtype, unwrap_peft
+from decisionformer.heads import CodeReadoutHead, Head, build_head, head_class
+from decisionformer.losses import MASK_VALUE, masked_logits
+from decisionformer.poolers import Pooler, build_pooler, default_pooler_type
+from decisionformer.prompting import PromptBuilder, prepare_tokenizer
 
 logger = logging.getLogger(__name__)
 DECISION_CONFIG = "decision_config.json"
@@ -163,7 +163,7 @@ def decision_config(result: BuildResult, config: RunConfig, *, temperatures: dic
     model, builder = result.model, result.builder
     readout = model.readout_only()
     style = builder.format.name
-    format_id = ("d3-code-readout-v1" if style == "d3" else "code-readout-v1") if readout else "deciformer-heads-v1"
+    format_id = ("d3-code-readout-v1" if style == "d3" else "code-readout-v1") if readout else "decisionformer-heads-v1"
     by_type = {k: v for k, v in temperatures.items() if k != "default"}
     payload: dict[str, Any] = {
         "format_version": 1, "format_id": format_id, "prompt": style,
@@ -171,11 +171,11 @@ def decision_config(result: BuildResult, config: RunConfig, *, temperatures: dic
         "codes": list(builder.codes), "token_ids": list(builder.code_token_ids or []),
         "temperature": float(temperatures.get("default", 1.0)),
         "attention_mode": CHECKPOINT_NAMES.get(result.attention, result.attention),
-        "pooling": "last" if readout else "deciformer", "max_length": None, "readout_dtype": "float32",
+        "pooling": "last" if readout else "decisionformer", "max_length": None, "readout_dtype": "float32",
     }
     if by_type:
         payload["temperature_by_type"] = by_type
-    payload["deciformer"] = {
+    payload["decisionformer"] = {
         "version": __version__, "kind": result.kind, "backbone": backbone_kind,
         "chat_template_kwargs": config.data.prompt.chat_template_kwargs,
         "heads": {name: cfg.model_dump(mode="json", exclude_none=True) for name, cfg in config.model.heads.items()},
@@ -227,11 +227,11 @@ def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu
     """Replace an adapter checkpoint with merged full weights at the root (the standard layout)."""
     from peft import PeftModel
 
-    from deciformer.api import Decider
+    from decisionformer.api import Decider
 
     out = Path(directory)
     payload = json.loads((out / DECISION_CONFIG).read_text())
-    if payload["deciformer"]["backbone"] != "adapter":
+    if payload["decisionformer"]["backbone"] != "adapter":
         return
     decider = Decider.from_pretrained(out, device=device, dtype=dtype, merge=False)
     peft_model = decider.model.backbone.model
@@ -240,20 +240,20 @@ def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu
     merged = peft_model.merge_and_unload()
     merged.save_pretrained(str(out), safe_serialization=True)
     shutil.rmtree(out / "adapter")
-    payload["deciformer"]["backbone"] = "full"
+    payload["decisionformer"]["backbone"] = "full"
     (out / DECISION_CONFIG).write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def model_card(payload: dict[str, Any], config: RunConfig | None = None) -> str:
-    """A Hub model card with metadata, usage for deciformer, vLLM (when servable) and the Decision Index."""
-    ext = payload.get("deciformer", {})
+    """A Hub model card with metadata, usage for decisionformer, vLLM (when servable) and the Decision Index."""
+    ext = payload.get("decisionformer", {})
     metrics = ext.get("metrics") or {}
     servable = payload.get("format_id") == "d3-code-readout-v1"
-    lines = ["---", f"base_model: {payload.get('base_model')}", "library_name: deciformer",
-             "pipeline_tag: text-classification", "tags:", "- deciformer", "- decision-model", "- system-one",
+    lines = ["---", f"base_model: {payload.get('base_model')}", "library_name: decisionformer",
+             "pipeline_tag: text-classification", "tags:", "- decisionformer", "- decision-model", "- system-one",
              "---", "", "# Decision model", "",
              f"A one-pass decision model fine-tuned from `{payload.get('base_model')}` with "
-             "[deciformer](https://github.com/FrontiersMindAI/deciformer). It answers typed questions (choice, yes/no "
+             "[decisionformer](https://github.com/FrontiersMindAI/decisionformer). It answers typed questions (choice, yes/no "
              "`noul`, score) about a state with a calibrated probability for every option, in the System One "
              "format used by Jev, vLLM `/v1/systemone` and the Decision Index.", "",
              "| | |", "|---|---|", f"| prompt format | `{payload.get('prompt')}` |",
@@ -264,12 +264,12 @@ def model_card(payload: dict[str, Any], config: RunConfig | None = None) -> str:
         shown = {k: metrics[k] for k in ("accuracy", "ece", "brier", "nll", "count") if k in metrics}
         lines.append("| validation | " + ", ".join(f"{k} {v:.4f}" if isinstance(v, float) else f"{k} {v}"
                                                   for k, v in shown.items()) + " |")
-    lines += ["", "## Use", "", "```python", "from deciformer import AutoDecisionModel", "",
+    lines += ["", "## Use", "", "```python", "from decisionformer import AutoDecisionModel", "",
               'model = AutoDecisionModel.from_pretrained("<this repo>")',
               'model.decide("My card was charged twice.", {',
               '    "team": {"type": "choice", "criteria": {"billing": None, "shipping": None}},',
               '    "urgent": {"type": "noul", "instructions": "Does this need a reply within the hour?"},', "})",
-              "```", "", "Serve it on `/v1/systemone`: `deciformer serve <this repo>`."]
+              "```", "", "Serve it on `/v1/systemone`: `decisionformer serve <this repo>`."]
     if servable:
         lines += ["", "This checkpoint follows the Decision 3.0 code-readout contract, so vLLM builds with "
                       "structured-decisions support can also serve it (`vllm serve <this repo>`) when the backbone "
