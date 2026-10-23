@@ -404,3 +404,72 @@ def test_device_choice(monkeypatch):
     assert pick_device(0, world_size=2).type == "cpu", "multi-process runs (gloo) stay on CPU"
     monkeypatch.setenv("DECISIONFORMER_DEVICE", "cpu")
     assert pick_device().type == "cpu"
+
+
+def test_bundled_recipes_load_by_name_and_resolve_defaults():
+    from decisionformer.config import config_path, list_recipes
+
+    recipes = list_recipes()
+    assert "deciformer15k_qwen3" in recipes and "local_smollm2" in recipes and all(recipes.values())
+    for name in recipes:
+        config = load_config(name)  # every bundled recipe is valid as shipped
+        assert config.train.lr is not None and config.train.resume == "auto"
+    assert load_config("deciformer15k_qwen3.yaml").model.backbone == "Qwen/Qwen3-0.6B"
+    with pytest.raises(FileNotFoundError, match="decisionformer init NAME"):
+        config_path("no_such_recipe")
+
+
+def test_configs_from_dicts_with_overrides_and_mode_learning_rates(tmp_path):
+    base = {"model": {"backbone": "x", "head": {"type": "option_scoring"}}, "train": {"output_dir": "out"}}
+    assert load_config(base).train.lr == 2e-5  # full fine-tuning
+    assert load_config({**base, "finetune": {"mode": "lora"}}).train.lr == 2e-4
+    assert load_config({**base, "finetune": {"mode": "head_only"}}).train.lr == 1e-3
+    tuned = load_config(base, {"train.lr": 5e-5, "train.max_steps": 10, "data.eval": {"dev": "d.jsonl"}})
+    assert tuned.train.lr == 5e-5 and tuned.train.max_steps == 10 and tuned.data.eval == {"dev": "d.jsonl"}
+    # a user file can inherit from a bundled recipe
+    child = _write(tmp_path / "mine.yaml", "base: local_smollm2\ntrain: {output_dir: runs/mine, max_steps: 5}\n")
+    mine = load_config(child)
+    assert mine.model.backbone == "HuggingFaceTB/SmolLM2-135M-Instruct" and mine.train.max_steps == 5
+    defaults = load_config(base)
+    assert (defaults.train.save_every, defaults.train.eval_every, defaults.data.max_length) == (500, 500, 1024)
+
+
+def test_recipes_and_init_commands(tmp_path, capsys, monkeypatch):
+    from decisionformer.cli import main
+
+    main(["recipes"])
+    assert "deciformer15k_qwen3" in capsys.readouterr().out
+    monkeypatch.chdir(tmp_path)
+    main(["init", "local_smollm2"])
+    assert (tmp_path / "local_smollm2.yaml").read_text().startswith("# Fine-tune on a laptop")
+    with pytest.raises(SystemExit, match="exists"):
+        main(["init", "local_smollm2"])
+    main(["init", "local_smollm2", "my.yaml"])
+    assert load_config(tmp_path / "my.yaml").model.backbone.endswith("SmolLM2-135M-Instruct")
+    with pytest.raises(SystemExit, match="neither a config file nor a bundled recipe"):
+        main(["train", "missing.yaml"])
+
+
+def test_training_warns_about_overlap_between_splits(tmp_path, caplog):
+    from conftest import synthetic_records, write_jsonl
+
+    from decisionformer.trainer import _warn_about_leakage
+
+    records = synthetic_records(16, 1)
+    write_jsonl(tmp_path / "train.jsonl", records)
+    write_jsonl(tmp_path / "dev.jsonl", records[:4])
+    config = load_config({"model": {"backbone": "x", "head": {"type": "option_scoring"}},
+                          "data": {"train": str(tmp_path / "train.jsonl"), "eval": {"dev": str(tmp_path / "dev.jsonl")}},
+                          "train": {"output_dir": "out"}})
+    with caplog.at_level("WARNING", logger="decisionformer"):
+        _warn_about_leakage(config)
+    assert "train shares 4 id value(s)" in caplog.text
+
+
+def test_local_runs_answer_with_their_run_name(tmp_path):
+    from decisionformer.api import display_name
+
+    best = tmp_path / "runs" / "my-decider" / "best"
+    best.mkdir(parents=True)
+    assert display_name(best, best) == "my-decider"
+    assert display_name("org/model", best) == "org/model"

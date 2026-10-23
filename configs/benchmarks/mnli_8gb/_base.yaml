@@ -1,5 +1,4 @@
 # 8 GB Turing GPU (RTX 2060 SUPER): fp16 autocast, no bf16 / flash-attention.
-base: ../../base.yaml
 data:
   train: data/mnli/train.jsonl
   calibration: data/mnli/calibration_small.jsonl

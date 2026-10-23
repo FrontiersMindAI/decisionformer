@@ -17,7 +17,7 @@ from typing import Any
 
 import torch
 
-from decisionformer.api import Decider, _local_dir, _prompt_name
+from decisionformer.api import Decider, _local_dir, _prompt_name, display_name
 from decisionformer.formats import get_format
 from decisionformer.model import DECISION_CONFIG, HEADS, READOUT
 from decisionformer.prompting import Encoded, PromptBuilder, prepare_tokenizer
@@ -102,7 +102,7 @@ class VLLMDecider(Decider):
         builder = PromptBuilder(tokenizer, get_format(prompt or _prompt_name(config)), "decoder", max_length=limit,
                                 overflow="error", codes=config["codes"], code_token_ids=config["token_ids"],
                                 chat_template_kwargs=ext.get("chat_template_kwargs"))
-        name = ext.get("name") or (str(name_or_path) if not Path(str(name_or_path)).is_dir() else root.name)
+        name = ext.get("name") or display_name(name_or_path, root)
         return cls(llm, builder, tokenizer, config, name=name, max_input_tokens=limit, path=root)
 
     def code_logits(self, decisions: list[Decision], encoded: list[Encoded]) -> list[torch.Tensor]:

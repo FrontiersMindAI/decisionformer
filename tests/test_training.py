@@ -221,6 +221,9 @@ def test_pause_and_resume_is_exact(model_root, data_dir, tmp_path):
                                         "data": {"eval": {}}},
                                  overrides=["data.calibration=null"])
             train(config)
+            paused = stop is not None
+            assert (Path(config.train.output_dir) / "checkpoints").exists() == paused, \
+                "a pause keeps resumable state; a finished run removes it"
         return load_file(str(Path(config.train.output_dir) / "last" / "readout.safetensors")), \
             load_file(str(Path(config.train.output_dir) / "last" / "model.safetensors"))
 
@@ -300,3 +303,16 @@ def test_exports_are_saved_in_the_export_dtype(model_root, data_dir, tmp_path, m
 
     AutoDecisionModel.from_pretrained(best, device="cpu", dtype=torch.float32).decide(
         "the small circle is blue .", {"red": {"type": "noul", "instructions": "Is it red ?"}})
+
+
+def test_train_from_python_with_a_dict_config(model_root, data_dir, tmp_path):
+    import decisionformer
+
+    summary = decisionformer.train({
+        "model": {"backbone": str(build_decoder(model_root, "llama")), "head": {"type": "code_readout"}},
+        "finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}},
+        "data": {"train": str(data_dir / "train.jsonl"), "eval": {"dev": str(data_dir / "dev.jsonl")}},
+        "train": {"output_dir": str(tmp_path / "run"), "global_batch_size": 8, "micro_batch_size": 8},
+    }, {"train.max_steps": 2})
+    assert summary["steps"] == 2 and summary["complete"]
+    assert (tmp_path / "run" / "best" / "decision_config.json").exists()

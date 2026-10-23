@@ -10,7 +10,7 @@ generation. Three lines to decide, one command to train, one command to serve.
 
 Python 3.10 or newer, with PyTorch 2.6+ and transformers 5.20+.
 
-**With pip**
+**With pip** (from the first public release; until then, install from GitHub)
 
 ```bash
 pip install decisionformer
@@ -114,8 +114,10 @@ curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
 ```
 
 The server takes the same `state` and `questions` and returns the same JSON as `decide`, with `id`, `object` and
-`created` added. It is the System One API used by Jev, vLLM and the Decision Index. Over-long requests are
-refused with HTTP 422, never truncated, and `--api-key-env MY_KEY_VAR` requires `Authorization: Bearer <key>`.
+`created` added. It is the System One API used by Jev, vLLM and the Decision Index; the request and response
+schemas are at `/docs`. Over-long requests are refused with HTTP 422, never truncated, and
+`--api-key-env MY_KEY_VAR` requires `Authorization: Bearer <key>`. A request that arrives while the model is idle
+runs at once; requests that arrive while it is busy are answered together, up to `--max-batch` (16) at a time.
 
 For code-readout checkpoints on Qwen3.5 (the Decision 3.0 layout), vLLM can run the model behind the same API.
 Other checkpoints fail with a clear error that points to the default backend:
@@ -141,22 +143,26 @@ Backbones are the architectures built into Hugging Face transformers, loaded wit
 `save_pretrained`; decisionformer has no model code of its own. Hub models that need their own modeling code
 (`trust_remote_code`) are not supported. Decoders read the answer as a code token (`A`, `B`, ...) at the end of
 the prompt, which works from step 0; encoders score each option. Encoder-decoder models without a standalone text
-encoder in transformers (BART) are refused with a clear error.
+encoder in transformers (BART) are refused with a clear error. Fine-tuning Qwen3.5 with the answer-code readout
+has not learned reliably in our runs yet (`docs/benchmarks.md`); loading and serving Qwen3.5 checkpoints such as
+`vllm-sr/d3-edge` works.
 
 ## Fine-tune
 
 ```bash
 decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
-decisionformer train configs/recipes/deciformer15k_qwen35.yaml
-torchrun --nproc-per-node 8 -m decisionformer train configs/recipes/deciformer15k_qwen35.yaml   # multi-GPU
+decisionformer train deciformer15k_qwen3                  # Qwen3-0.6B + LoRA, one epoch
+torchrun --nproc-per-node 8 -m decisionformer train deciformer15k_qwen3                     # multi-GPU
 ```
 
-Every setting lives in a YAML config, and any value can be overridden on the command line with dotted keys
-(`train.lr=1e-4`). `decisionformer config FILE` prints the resolved configuration. A minimal config:
+`deciformer15k_qwen3` is a bundled recipe: `decisionformer recipes` lists them all, and
+`decisionformer init deciformer15k_qwen3` copies one to a YAML file you can edit. Every setting lives in that YAML,
+and any value can be overridden on the command line with dotted keys (`train.lr=1e-4`).
+`decisionformer config FILE` prints the resolved configuration. A minimal config:
 
 ```yaml
 model:
-  backbone: Qwen/Qwen3.5-0.8B        # any Hub id or local path
+  backbone: Qwen/Qwen3-0.6B          # any Hub id or local path
   attention: causal                  # causal | bidirectional | prefix_bidirectional
   head: {type: code_readout}
 finetune:
@@ -168,13 +174,24 @@ data:
   eval: {dev: data/dev.jsonl}
 train:
   output_dir: runs/my-decider
-  lr: 2.0e-4
   push_to_hub: my-org/my-decider     # optional: uploads best/ when training ends (private by default)
 ```
 
-A run writes `runs/<name>/best` and `last`: finished checkpoints in the standard Hugging Face layout, ready for
-`from_pretrained`, `serve` and `push`. It also writes `metrics.jsonl`, per-example predictions at every
-evaluation, resumable state and `summary.json`.
+Everything else has a default. The learning rate follows the fine-tuning mode (2e-5 full, 2e-4 LoRA and QLoRA,
+1e-3 head only). Training evaluates and saves resumable state every 500 steps, and rerunning the same command
+resumes where it stopped; the resumable state is removed once the run finishes. A run writes `runs/<name>/best` and `last`: finished checkpoints in the standard Hugging
+Face layout, ready for `from_pretrained`, `serve` and `push`. It also writes `metrics.jsonl`, per-example
+predictions at every evaluation and `summary.json`. Training warns when the training data shares ids, families or
+identical states with the evaluation or calibration data.
+
+The same from Python, with a recipe name, a YAML file or a dict:
+
+```python
+import decisionformer
+
+summary = decisionformer.train("deciformer15k_qwen3", {"train.max_steps": 200})
+model = decisionformer.AutoDecisionModel.from_pretrained("runs/deciformer15k-qwen3-0.6b/best")
+```
 
 ### On a laptop (Mac or Linux)
 
@@ -184,7 +201,7 @@ steps:
 ```bash
 pip install "decisionformer[data]"
 decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
-decisionformer train configs/recipes/local_smollm2.yaml
+decisionformer train local_smollm2
 decisionformer serve runs/local-smollm2-135m/best        # try it on /v1/systemone
 ```
 
@@ -192,8 +209,8 @@ The device is picked automatically: a CUDA GPU, then Apple silicon (MPS), then t
 `DECISIONFORMER_DEVICE=cpu` to force the CPU. On MPS and CPU, training runs in float32. The recipe keeps memory
 low with micro-batches of 4, at most 4,096 tokens per micro-batch and gradient checkpointing: on a 6-core CPU it
 peaked at 3.7 GB of memory and took about 15 s per step. If memory is still tight, lower them:
-`train.micro_batch_size=2 train.token_budget=2048`. A checkpoint is saved every 100 steps, and
-rerunning the same command resumes from it.
+`train.micro_batch_size=2 train.token_budget=2048`. Resumable state is saved every 100 steps, and rerunning the
+same command resumes from it.
 
 ### Training data
 
@@ -354,7 +371,9 @@ python -m decision_index pipeline --engine decisionformer.integrations.decision_
 
 ## Measured results
 
-On one 8 GB RTX 2060 SUPER in FP16, on MNLI: Qwen3-0.6B with LoRA and `code_readout` went from 0.36 zero-shot to
+On one 8 GB RTX 2060 SUPER in FP16, the starting recipe `deciformer15k_qwen3` (Qwen3-0.6B with LoRA, one epoch of
+deciformer-15k, 30 minutes) reaches **0.824** dev accuracy across its 9 tasks, from 0.75 (VitaminC) to 0.90 (Civil
+Comments), with calibrated ECE 0.023. On MNLI: Qwen3-0.6B with LoRA and `code_readout` went from 0.36 zero-shot to
 **0.83** dev accuracy in 250 steps (calibrated ECE 0.042), and Qwen3.5-0.8B with QLoRA and bidirectional attention
 reached **0.84** in 150 steps. The vLLM backend matched the transformers backend to within 0.001 per probability, with identical choices,
 at a median of 30 ms per 3-question request. Configs and full tables are in [`docs/benchmarks.md`](docs/benchmarks.md).
@@ -369,7 +388,7 @@ ruff check src tests
 ```
 
 Experimental: `decisionformer adapt` runs masked next-token prediction (as in LLM2Vec) before bidirectional
-training (`configs/recipes/adapt_mntp.yaml`). A short stage did not help in our tests.
+training (the `adapt_mntp` recipe). A short stage did not help in our tests.
 
 ## Roadmap
 

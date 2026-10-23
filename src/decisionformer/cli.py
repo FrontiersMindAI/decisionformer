@@ -1,4 +1,10 @@
-"""decisionformer command line: train, eval, predict, serve, push, compare, data check/split, config (adapt: experimental)."""
+"""decisionformer: fine-tune, evaluate, serve and publish one-pass decision models on Hugging Face transformers.
+
+Start with a bundled recipe:
+  decisionformer recipes                                   list them
+  decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+  decisionformer train deciformer15k_qwen3                 fine-tune (a recipe name or your own YAML file)
+  decisionformer serve runs/deciformer15k-qwen3-0.6b/best  answer requests on /v1/systemone"""
 
 from __future__ import annotations
 
@@ -9,26 +15,57 @@ from pathlib import Path
 from typing import Any
 
 
-def _train(args: argparse.Namespace) -> None:
+def _run_config(args: argparse.Namespace, **options: Any) -> Any:
     from decisionformer.config import load_config
+
+    try:
+        return load_config(args.config, args.overrides, **options)
+    except FileNotFoundError as error:
+        raise SystemExit(f"error: {error}") from None
+
+
+def _train(args: argparse.Namespace) -> None:
     from decisionformer.trainer import train
 
-    summary = train(load_config(args.config, args.overrides))
+    summary = train(_run_config(args))
     if summary:
         print(json.dumps(summary, indent=2))
 
 
 def _adapt(args: argparse.Namespace) -> None:
     from decisionformer.adapt import adapt
-    from decisionformer.config import load_config
 
-    print(adapt(load_config(args.config, args.overrides, validate_components=False)))
+    print(adapt(_run_config(args, validate_components=False)))
 
 
 def _config(args: argparse.Namespace) -> None:
-    from decisionformer.config import dump_config, load_config
+    from decisionformer.config import dump_config
 
-    print(dump_config(load_config(args.config, args.overrides)))
+    print(dump_config(_run_config(args)))
+
+
+def _recipes(args: argparse.Namespace) -> None:
+    from decisionformer.config import list_recipes
+
+    recipes = list_recipes()
+    width = max(map(len, recipes))
+    for name, description in recipes.items():
+        print(f"{name:<{width}}  {description}")
+    print("\nRun one with `decisionformer train NAME`, or copy it to edit: `decisionformer init NAME`.")
+
+
+def _init(args: argparse.Namespace) -> None:
+    from decisionformer.config import config_path
+
+    try:
+        source = config_path(args.recipe)
+    except FileNotFoundError as error:
+        raise SystemExit(f"error: {error}") from None
+    target = Path(args.path or f"{source.stem}.yaml")
+    if target.exists() and not args.force:
+        raise SystemExit(f"error: {target} exists (use --force to overwrite)")
+    target.write_text(source.read_text())
+    print(f"Wrote {target}. Edit it, then: decisionformer train {target}")
 
 
 def _load(args: argparse.Namespace) -> Any:
@@ -76,14 +113,41 @@ def _eval(args: argparse.Namespace) -> None:
 
 
 def _predict(args: argparse.Namespace) -> None:
-    from decisionformer.schema import read_records
+    from decisionformer.schema import as_request, read_records
 
     decider = _load(args)
-    lines = []
-    for number, record in enumerate(r for path in args.data for r in read_records(path)):
-        response = decider.decide(record.get("state"), record["questions"], images=record.get("images"))
-        lines.append(json.dumps({"id": record.get("id", number), **response}, ensure_ascii=False) + "\n")
+    records = [r for path in args.data for r in read_records(path)]
+    lines: list[str] = []
+    for start in range(0, len(records), 64):  # requests in a chunk share forward passes
+        chunk = list(enumerate(records[start:start + 64], start))
+        requests: list[dict[str, Any] | Exception] = []
+        for number, record in chunk:
+            try:
+                state, questions = as_request(record, number)
+                requests.append({"state": state, "questions": questions, "images": record.get("images")})
+            except ValueError as error:
+                requests.append(error)
+        valid = [request for request in requests if not isinstance(request, Exception)]
+        try:
+            answers = iter(decider.decide_many(valid))
+            results: list[dict[str, Any] | Exception] = [r if isinstance(r, Exception) else next(answers)
+                                                         for r in requests]
+        except ValueError:  # one request does not fit: answer the others and report it alone
+            results = [r if isinstance(r, Exception) else _decide_one(decider, r) for r in requests]
+        for (number, record), result in zip(chunk, results):
+            body = {"error": {"message": str(result)}} if isinstance(result, Exception) else result
+            lines.append(json.dumps({"id": record.get("id", number), **body}, ensure_ascii=False) + "\n")
     _write(lines, args.output)
+    failed = sum('"error": {"message"' in line for line in lines)
+    if failed:
+        print(f"{failed} of {len(lines)} requests could not be answered; see their `error` lines", file=sys.stderr)
+
+
+def _decide_one(decider: Any, request: dict[str, Any]) -> dict[str, Any] | Exception:
+    try:
+        return decider.decide_many([request])[0]
+    except ValueError as error:
+        return error
 
 
 def _serve(args: argparse.Namespace) -> None:
@@ -92,8 +156,8 @@ def _serve(args: argparse.Namespace) -> None:
 
     try:
         serve(args.model, host=args.host, port=args.port, device=args.device, backend=args.backend,
-              api_key_env=args.api_key_env, batch_size=args.batch_size, max_length=args.max_length,
-              revision=args.revision)
+              api_key_env=args.api_key_env, max_batch=args.max_batch, batch_size=args.batch_size,
+              max_length=args.max_length, revision=args.revision)
     except UnsupportedBackend as error:
         raise SystemExit(f"error: {error}") from None
 
@@ -161,16 +225,32 @@ def _model_options(command: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="decisionformer", description=__doc__)
+    raw = argparse.RawDescriptionHelpFormatter
+    parser = argparse.ArgumentParser(prog="decisionformer", description=__doc__, formatter_class=raw)
     commands = parser.add_subparsers(dest="command", required=True)
 
+    examples = """examples:
+  decisionformer {name} deciformer15k_qwen3
+  decisionformer {name} my_config.yaml train.lr=1e-4 train.max_steps=200
+  torchrun --nproc-per-node 8 -m decisionformer {name} my_config.yaml        (multi-GPU training)
+
+`decisionformer recipes` lists the bundled recipes; `decisionformer init NAME` copies one to edit."""
     for name, handler, help_text in (("train", _train, "Fine-tune a decision model (torchrun for multi-GPU)"),
                                      ("config", _config, "Print the fully resolved configuration"),
                                      ("adapt", _adapt, "Experimental: MNTP adaptation of a decoder")):
-        command = commands.add_parser(name, help=help_text)
-        command.add_argument("config")
+        command = commands.add_parser(name, help=help_text, description=help_text, formatter_class=raw,
+                                      epilog=examples.format(name=name))
+        command.add_argument("config", help="a YAML config file or a bundled recipe name")
         command.add_argument("overrides", nargs="*", help="dotted overrides, e.g. train.lr=1e-5")
         command.set_defaults(handler=handler)
+
+    recipes = commands.add_parser("recipes", help="List the bundled training recipes")
+    recipes.set_defaults(handler=_recipes)
+    init = commands.add_parser("init", help="Copy a bundled recipe to a YAML file you can edit")
+    init.add_argument("recipe", help="recipe name (see `decisionformer recipes`)")
+    init.add_argument("path", nargs="?", help="where to write it (default: RECIPE.yaml)")
+    init.add_argument("--force", action="store_true", help="overwrite an existing file")
+    init.set_defaults(handler=_init)
 
     evaluate = commands.add_parser("eval", help="Score a decision model on labeled requests (JSONL)")
     _model_options(evaluate)
@@ -193,6 +273,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--backend", choices=("transformers", "vllm"), default="transformers",
                        help="vllm: vLLM computes the readout (Qwen3.5/3.8 code-readout checkpoints only)")
+    serve.add_argument("--max-batch", type=int, default=16,
+                       help="requests arriving together are answered in one batch of up to this many")
     serve.add_argument("--api-key-env", default="DECISIONFORMER_API_KEY",
                        help="require `Authorization: Bearer <key>` when this variable is set")
     serve.set_defaults(handler=_serve)

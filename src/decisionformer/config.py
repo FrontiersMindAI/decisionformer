@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -75,7 +76,7 @@ class DataConfig(_Strict):
     eval: dict[str, str | list[str]] = Field(default_factory=dict)
     calibration: str | list[str] | None = None
     prompt: PromptConfig = Field(default_factory=PromptConfig)
-    max_length: int = 2048
+    max_length: int = 1024
     # Training and evaluation prompts longer than max_length: cut the state (default) or fail. Loaded and served
     # models never truncate; they refuse what does not fit.
     overflow: Literal["error", "truncate_state_end", "truncate_state_start"] = "truncate_state_end"
@@ -129,7 +130,7 @@ class TrainConfig(_Strict):
     global_batch_size: int = Field(32, ge=1)
     micro_batch_size: int = Field(8, ge=1)
     token_budget: int | None = Field(None, ge=1)
-    lr: float = 2e-5
+    lr: float | None = None  # None: 2e-5 for full fine-tuning, 2e-4 for LoRA and QLoRA, 1e-3 for head_only
     head_lr: float | None = None
     weight_decay: float = 0.01
     adam_betas: tuple[float, float] = (0.9, 0.999)
@@ -140,10 +141,10 @@ class TrainConfig(_Strict):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     loss: LossConfig = Field(default_factory=LossConfig)
     log_every: int = 10
-    eval_every: int | None = None
-    save_every: int | None = None
+    eval_every: int | None = 500
+    save_every: int | None = 500  # resumable state; rerunning the same command resumes (train.resume: auto)
     keep_last: int = 2
-    resume: str | None = None
+    resume: str | None = "auto"
     shard_optimizer_states: bool = False
     find_unused_parameters: bool | Literal["auto"] = "auto"
     drop_last: bool = False
@@ -160,7 +161,7 @@ class TrainConfig(_Strict):
 class EvalConfig(_Strict):
     at_start: bool = False  # also evaluate before the first update (the step-0 baseline)
     ece_bins: int = 15
-    micro_batch_size: int = 16
+    micro_batch_size: int = 32
     token_budget: int | None = None
     selection_set: str | None = None
     selection_metric: str = "accuracy"
@@ -184,6 +185,9 @@ class AdaptConfig(_Strict):
     max_length: int = 512
 
 
+DEFAULT_LR = {"full": 2e-5, "lora": 2e-4, "qlora": 2e-4, "head_only": 1e-3}
+
+
 class RunConfig(_Strict):
     model: ModelConfig
     finetune: FinetuneConfig = Field(default_factory=FinetuneConfig)
@@ -201,26 +205,64 @@ class RunConfig(_Strict):
             raise ValueError("train.global_batch_size must be at least train.micro_batch_size")
         if self.eval.selection_set is not None and self.eval.selection_set not in self.data.eval:
             raise ValueError(f"eval.selection_set '{self.eval.selection_set}' is not one of data.eval")
+        if self.train.lr is None:
+            self.train.lr = DEFAULT_LR[self.finetune.mode]
         return self
 
 
-def _load_with_bases(path: Path, seen: tuple[Path, ...] = ()) -> Any:
-    path = path.resolve()
-    if path in seen:
-        raise ValueError(f"Config inheritance cycle through {path}")
-    node = OmegaConf.load(path)
+RECIPES = Path(__file__).parent / "recipes"
+
+
+def list_recipes() -> dict[str, str]:
+    """The bundled recipes: name -> the first line of the recipe's description."""
+    recipes = {}
+    for path in sorted(RECIPES.glob("*.yaml")):
+        comments = [line[1:].strip() for line in path.read_text().splitlines() if line.startswith("#")]
+        recipes[path.stem] = comments[0] if comments else ""
+    return recipes
+
+
+def config_path(source: str | Path) -> Path:
+    """A YAML config file, or the name of a bundled recipe (`decisionformer recipes` lists them)."""
+    path = Path(source).expanduser()
+    if path.is_file():
+        return path
+    if len(path.parts) == 1 and path.suffix in ("", ".yaml", ".yml") and (RECIPES / f"{path.stem}.yaml").is_file():
+        return RECIPES / f"{path.stem}.yaml"
+    raise FileNotFoundError(f"{source} is neither a config file nor a bundled recipe. Recipes: "
+                            f"{', '.join(list_recipes())}. Copy one to edit it: decisionformer init NAME")
+
+
+def _with_bases(node: Any, parent: Path, seen: tuple[Path, ...]) -> Any:
     bases = node.pop("base", None) if "base" in node else None
     if bases is None:
         return node
     merged = OmegaConf.create()
     for base in [bases] if isinstance(bases, str) else list(bases):
-        merged = OmegaConf.merge(merged, _load_with_bases(path.parent / str(base), (*seen, path)))
+        local = parent / str(base)
+        merged = OmegaConf.merge(merged, _load_file(local if local.is_file() else config_path(str(base)), seen))
     return OmegaConf.merge(merged, node)
 
 
-def load_config(path: str | Path, overrides: list[str] | None = None, *, validate_components: bool = True) -> RunConfig:
-    node = _load_with_bases(Path(path))
-    if overrides:
+def _load_file(path: Path, seen: tuple[Path, ...] = ()) -> Any:
+    path = path.resolve()
+    if path in seen:
+        raise ValueError(f"Config inheritance cycle through {path}")
+    return _with_bases(OmegaConf.load(path), path.parent, (*seen, path))
+
+
+def load_config(source: str | Path | Mapping[str, Any], overrides: Sequence[str] | Mapping[str, Any] | None = None,
+                *, validate_components: bool = True) -> RunConfig:
+    """A run config from a YAML file, a bundled recipe name or a dict (each may name a `base` to inherit from),
+    with overrides as dotted `key=value` strings or a `{dotted.key: value}` dict."""
+    if isinstance(source, Mapping):
+        node = _with_bases(OmegaConf.create(dict(source)), Path.cwd(), ())
+    else:
+        node = _load_file(config_path(source))
+    if isinstance(overrides, Mapping):
+        for key, value in overrides.items():
+            OmegaConf.update(node, key, value, merge=True)
+    elif overrides:
         node = OmegaConf.merge(node, OmegaConf.from_dotlist(list(overrides)))
     config = RunConfig.model_validate(OmegaConf.to_container(node, resolve=True))
     if validate_components:
