@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1e1b4b" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6366f1"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="430" rx="22" fill="url(#bg)"/>
+
+  <!-- any Hugging Face model -->
+  <text x="185" y="62" text-anchor="middle" font-size="19" font-weight="700" fill="#1e293b">Any Hugging Face model</text>
+  <text x="185" y="86" text-anchor="middle" font-size="14" fill="#64748b">decoder or encoder</text>
+  <g font-size="15" font-weight="600" text-anchor="middle">
+    <g filter="url(#shadow)">
+      <rect x="45" y="108" width="135" height="40" rx="20" fill="#ffffff" stroke="#c7d2fe"/>
+      <rect x="190" y="108" width="135" height="40" rx="20" fill="#ffffff" stroke="#c7d2fe"/>
+      <rect x="45" y="160" width="135" height="40" rx="20" fill="#ffffff" stroke="#c7d2fe"/>
+      <rect x="190" y="160" width="135" height="40" rx="20" fill="#ffffff" stroke="#c7d2fe"/>
+      <rect x="45" y="212" width="135" height="40" rx="20" fill="#ffffff" stroke="#c7d2fe"/>
+      <rect x="190" y="212" width="135" height="40" rx="20" fill="#ffffff" stroke="#c7d2fe"/>
+    </g>
+    <text x="112" y="133" fill="#312e81">Qwen3.5</text>
+    <text x="257" y="133" fill="#312e81">Gemma 4</text>
+    <text x="112" y="185" fill="#312e81">GPT-OSS</text>
+    <text x="257" y="185" fill="#312e81">Llama 4</text>
+    <text x="112" y="237" fill="#0f766e">ModernBERT</text>
+    <text x="257" y="237" fill="#0f766e">DeBERTa-v3</text>
+  </g>
+  <text x="185" y="282" text-anchor="middle" font-size="14" fill="#64748b">45 model families tested</text>
+
+  <!-- arrow: fine-tune -->
+  <line x1="340" y1="180" x2="418" y2="180" stroke="#6366f1" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="379" y="160" text-anchor="middle" font-size="13" font-weight="600" fill="#4338ca">fine-tune</text>
+  <text x="379" y="206" text-anchor="middle" font-size="12" fill="#64748b">full · LoRA</text>
+  <text x="379" y="222" text-anchor="middle" font-size="12" fill="#64748b">QLoRA</text>
+
+  <!-- DecisionFormer core -->
+  <g filter="url(#shadow)">
+    <rect x="428" y="88" width="330" height="190" rx="22" fill="url(#core)"/>
+  </g>
+  <text x="593" y="140" text-anchor="middle" font-size="31" font-weight="800" fill="#ffffff">DecisionFormer</text>
+  <text x="593" y="168" text-anchor="middle" font-size="15" fill="#e0e7ff">one forward pass · no generation</text>
+  <g font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">
+    <rect x="452" y="196" width="88" height="36" rx="18" fill="#ffffff" fill-opacity="0.18"/>
+    <rect x="549" y="196" width="88" height="36" rx="18" fill="#ffffff" fill-opacity="0.18"/>
+    <rect x="646" y="196" width="88" height="36" rx="18" fill="#ffffff" fill-opacity="0.18"/>
+    <text x="496" y="219">train</text>
+    <text x="593" y="219">load</text>
+    <text x="690" y="219">serve</text>
+  </g>
+  <text x="593" y="256" text-anchor="middle" font-size="13" fill="#c7d2fe">calibrated · Hub-ready · vLLM-servable</text>
+
+  <!-- arrow: decide -->
+  <line x1="768" y1="180" x2="836" y2="180" stroke="#6366f1" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="802" y="160" text-anchor="middle" font-size="13" font-weight="600" fill="#4338ca">decide()</text>
+
+  <!-- answers card -->
+  <g filter="url(#shadow)">
+    <rect x="846" y="44" width="312" height="276" rx="16" fill="#ffffff" stroke="#e2e8f0"/>
+  </g>
+  <text x="866" y="72" font-size="13" fill="#64748b">“The order arrived damaged …”</text>
+
+  <text x="866" y="102" font-size="14" font-weight="700" fill="#1e293b">route</text>
+  <g font-size="12" fill="#334155">
+    <text x="866" y="124">returns</text>
+    <rect x="940" y="114" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="114" width="159" height="12" rx="6" fill="#4f46e5"/>
+    <text x="1108" y="124">0.99</text>
+    <text x="866" y="144">billing</text>
+    <rect x="940" y="134" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="134" width="2" height="12" rx="1" fill="#4f46e5"/>
+    <text x="1108" y="144">0.00</text>
+    <text x="866" y="164">technical</text>
+    <rect x="940" y="154" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="154" width="3" height="12" rx="1.5" fill="#4f46e5"/>
+    <text x="1108" y="164">0.01</text>
+  </g>
+
+  <text x="866" y="196" font-size="14" font-weight="700" fill="#1e293b">receipt?</text>
+  <g font-size="12" fill="#334155">
+    <text x="866" y="218">yes</text>
+    <rect x="940" y="208" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="208" width="160" height="12" rx="6" fill="#0d9488"/>
+    <text x="1108" y="218">1.00</text>
+  </g>
+
+  <text x="866" y="250" font-size="14" font-weight="700" fill="#1e293b">urgency</text>
+  <g font-size="12" fill="#334155">
+    <text x="866" y="272">routine</text>
+    <rect x="940" y="262" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="262" width="86" height="12" rx="6" fill="#d97706"/>
+    <text x="1108" y="272">0.54</text>
+    <text x="866" y="292">soon</text>
+    <rect x="940" y="282" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="282" width="55" height="12" rx="6" fill="#d97706"/>
+    <text x="1108" y="292">0.34</text>
+    <text x="866" y="312">today</text>
+    <rect x="940" y="302" width="160" height="12" rx="6" fill="#e2e8f0"/>
+    <rect x="940" y="302" width="19" height="12" rx="6" fill="#d97706"/>
+    <text x="1108" y="312">0.12</text>
+  </g>
+
+  <!-- the whole workflow -->
+  <rect x="40" y="352" width="1120" height="52" rx="14" fill="#1e1b4b"/>
+  <g font-family="SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="15" fill="#e0e7ff" text-anchor="middle">
+    <text x="181" y="384">pip install decisionformer</text>
+    <text x="477" y="384">decisionformer train cfg.yaml</text>
+    <text x="754" y="384">model.decide(state, q)</text>
+    <text x="1018" y="384">decisionformer serve model</text>
+  </g>
+  <g fill="#818cf8" font-size="18" text-anchor="middle">
+    <text x="322" y="385">›</text>
+    <text x="631" y="385">›</text>
+    <text x="877" y="385">›</text>
+  </g>
+</svg>

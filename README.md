@@ -1,23 +1,23 @@
 # DecisionFormer
 
-**Fine-tune, load and serve one-pass decision models on any Hugging Face transformers backbone.**
+![DecisionFormer](assets/decisionformer.svg)
 
-A decision model reads a *state* (text or any JSON value) and answers typed questions about it, with a calibrated
-probability for every option, in a single forward pass and with no text generation. That makes it fast, cheap
-and easy to calibrate, which suits routing, moderation, classification, judging, entailment and extraction gates.
+The simplest way to fine-tune and serve decision models on any Hugging Face model. Give it a *state* and typed
+*questions*; it returns a calibrated probability for every option in a single forward pass, with no text
+generation. Three lines to decide, one command to train, one command to serve.
 
 ## Installation
 
 Python 3.10 or newer, with PyTorch 2.6+ and transformers 5.20+.
 
-**From PyPI**
+**With pip**
 
 ```bash
 pip install decisionformer
-pip install "decisionformer[serve]"       # with the /v1/systemone server
+pip install "decisionformer[serve]"       # with the API server
 ```
 
-**From GitHub** (the latest code)
+**From GitHub**
 
 ```bash
 pip install "git+https://github.com/FrontiersMindAI/decisionformer.git"
@@ -32,15 +32,15 @@ Optional extras, combined as `pip install "decisionformer[serve,qlora]"`:
 
 | extra | adds |
 |---|---|
-| `serve` | the `/v1/systemone` server (FastAPI, uvicorn) |
+| `serve` | the `/v1/systemone` API server (FastAPI, uvicorn) |
 | `qlora` | bitsandbytes, for QLoRA |
 | `vllm` | the vLLM serving backend (a vLLM build from 2026-10-15 or later) |
 | `fla` | fast Gated DeltaNet kernels for Qwen3.5 backbones |
-| `data` | datasets, for the example converters and `hf:` inputs |
+| `data` | datasets, for Hub datasets (`hf:` inputs) and the example converters |
 
-## Quickstart
+## Quick start
 
-DecisionFormer is to decision models what `transformers` is to language models:
+### Inference in Python
 
 ```python
 from decisionformer import AutoDecisionModel
@@ -95,28 +95,89 @@ response = model.decide(
 # }
 ```
 
-| | |
+`choice` picks one of the `criteria`, `noul` answers yes/no with the probability of yes, and `score` picks one of
+2 to 10 ordered levels. `model.decide_many([...])` answers several requests in shared batches.
+
+### Serve as an API
+
+```bash
+decisionformer serve vllm-sr/d3-edge --port 8000
+```
+
+```bash
+curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
+  "state": "I was charged twice for my subscription this month.",
+  "questions": {
+    "angry": {"type": "noul", "instructions": "Is the customer angry?"}
+  }
+}'
+```
+
+The server takes the same `state` and `questions` and returns the same JSON as `decide`, with `id`, `object` and
+`created` added. It is the System One API used by Jev, vLLM and the Decision Index. Over-long requests are
+refused with HTTP 422, never truncated, and `--api-key-env MY_KEY_VAR` requires `Authorization: Bearer <key>`.
+
+For code-readout checkpoints on Qwen3.5 (the Decision 3.0 layout), vLLM can run the model behind the same API.
+Other checkpoints fail with a clear error that points to the default backend:
+
+```bash
+pip install "decisionformer[vllm]"
+decisionformer serve vllm-sr/d3-edge --backend vllm
+```
+
+## Supported backbones
+
+Every family below is fine-tuned, exported, reloaded and checked against the Decision Index's response rules in
+`tests/test_zoo.py`. Newest first:
+
+| | families |
 |---|---|
-| **Train** | Any decoder (Qwen3.5, Gemma 4, GPT-OSS, Llama 4, DeepSeek-V3, Qwen3, Mistral, Phi, OLMo, SmolLM and more, including mixture-of-experts and hybrid linear-attention models) or encoder (ModernBERT, EuroBERT, DeBERTa-v3, XLM-R, RoBERTa, BERT, T5) |
-| **Fine-tuning** | `full`, `lora` (every `peft.LoraConfig` option), `qlora` (4- or 8-bit), `head_only` |
-| **Multi-GPU** | DDP through `torchrun`, with gradients identical to single-GPU training, optional ZeRO-1, and exact resume |
-| **Calibration** | Temperature per question type, fitted on a separate fold; ECE, Brier and NLL; constrained checkpoint selection |
-| **Checkpoints** | The shared standard of AutoJev and Decision 3.0: a plain transformers backbone, `decision_config.json` and `readout.safetensors`. Upload with `decisionformer push`, load with `from_pretrained` |
-| **Serve** | `decisionformer serve` on `/v1/systemone`, with transformers or vLLM computing the model |
-| **Benchmark** | A Decision Index engine, and a server that speaks the Index's `http` engine protocol |
+| **Decoders, hybrid linear attention** | Qwen3.5 (saved whole, with its vision tower), Qwen3-Next |
+| **Decoders, mixture of experts** | GPT-OSS, Llama 4, DeepSeek-V3, Qwen3-MoE, Granite-MoE, OLMoE, Phi-MoE, Mixtral |
+| **Decoders, dense** | Gemma 4, Gemma 3, Qwen3, SmolLM3, Seed-OSS, EXAONE 4, GLM-4, Ministral, Cohere 2, Hunyuan, OLMo 2, Granite, Phi-3, Qwen2, Gemma 2, Gemma, Mistral, Llama, Phi, StableLM, Falcon, GPT-NeoX, GPT-2 |
+| **Encoders** | ModernBERT, EuroBERT, DeBERTa-v3 (and v1/v2), XLM-RoBERTa, RoBERTa, ELECTRA, ALBERT, DistilBERT, BERT, T5 and mT5 (the encoder) |
 
-## The System One format
+Decoders read the answer as a code token (`A`, `B`, ...) at the end of the prompt, which works from step 0;
+encoders score each option. Encoder-decoder models without a standalone text encoder in transformers (BART) are
+refused with a clear error.
 
-A request has a `state` and named `questions`. Each question has a `type`:
+## Fine-tune
 
-| type | options | answer |
-|---|---|---|
-| `choice` | `criteria`: an object of option → description (or `null`), or a list of option names | `choice`, `probabilities`, `confidence` |
-| `noul` | none (yes/no) | `noul`: the probability of yes |
-| `score` | `criteria`: 2 to 10 ordered levels | `score` (expected level), `probabilities`, `confidence`, `legend` |
+```bash
+decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+decisionformer train configs/recipes/deciformer15k_qwen35.yaml
+torchrun --nproc-per-node 8 -m decisionformer train configs/recipes/deciformer15k_qwen35.yaml   # multi-GPU
+```
 
-Training data is the same request with the gold answers, one JSON object per line (JSONL). One record, spread
-out here for reading:
+Every setting lives in a YAML config, and any value can be overridden on the command line with dotted keys
+(`train.lr=1e-4`). `decisionformer config FILE` prints the resolved configuration. A minimal config:
+
+```yaml
+model:
+  backbone: Qwen/Qwen3.5-0.8B        # any Hub id or local path
+  attention: causal                  # causal | bidirectional | prefix_bidirectional
+  head: {type: code_readout}
+finetune:
+  mode: lora                         # full | lora | qlora | head_only
+  lora: {r: 16, lora_alpha: 32, target_modules: all-linear}
+data:
+  train: data/train.jsonl
+  calibration: data/calibration.jsonl
+  eval: {dev: data/dev.jsonl}
+train:
+  output_dir: runs/my-decider
+  lr: 2.0e-4
+  push_to_hub: my-org/my-decider     # optional: uploads best/ when training ends (private by default)
+```
+
+A run writes `runs/<name>/best` and `last`: finished checkpoints in the standard Hugging Face layout, ready for
+`from_pretrained`, `serve` and `push`. It also writes `metrics.jsonl`, per-example predictions at every
+evaluation, resumable state and `summary.json`.
+
+### Training data
+
+Training data is the request with the gold answers, one JSON object per line. One record, spread out here for
+reading:
 
 ```json
 {
@@ -145,46 +206,10 @@ works, and so do flat rows with one question each, as the deciformer pipeline wr
 related records together in splits, data checks and bootstrap intervals. Files can be `.jsonl`, `.jsonl.gz`, or a
 Hub dataset written as `hf:<name>[:<config>]:<split>`.
 
-```bash
-decisionformer data split hf:my-org/my-data:train --out data/my-data      # train / calibration / dev by family
-decisionformer data check dev=data/my-data/dev.jsonl calibration=data/my-data/calibration.jsonl \
-    train=data/my-data/train.jsonl                                         # leakage between splits
-```
-
-`data split` holds out 10% for calibration and 10% for dev by default (`--holdout NAME=FRACTION ...`), keeping
-whole families together and each task's share equal in every split. The source data is not modified.
-
-## Fine-tune
-
-```bash
-python examples/prepare_datasets.py mnli --output data/mnli --train-size 20000
-decisionformer train configs/recipes/decoder_lora_code_readout.yaml
-torchrun --nproc-per-node 8 -m decisionformer train configs/recipes/decoder_lora_code_readout.yaml train.lr=1e-4
-```
-
-Every setting lives in a YAML config, and any value can be overridden with dotted keys. `decisionformer config
-FILE` prints the resolved configuration. A minimal config:
-
-```yaml
-model:
-  backbone: Qwen/Qwen3.5-0.8B        # any Hub id or local path
-  attention: causal                  # causal | bidirectional | prefix_bidirectional
-  head: {type: code_readout}
-finetune:
-  mode: lora                         # full | lora | qlora | head_only
-  lora: {r: 16, lora_alpha: 32, target_modules: all-linear}
-data:
-  train: data/train.jsonl
-  calibration: data/calibration.jsonl
-  eval: {dev: data/dev.jsonl}
-train:
-  output_dir: runs/my-decider
-  lr: 2.0e-4
-  push_to_hub: my-org/my-decider     # optional: uploads best/ when training ends (private by default)
-```
-
-A run writes `runs/<name>/best` and `last`: finished, merged checkpoints in the standard layout, plus
-`metrics.jsonl`, per-example predictions at every evaluation, resumable state and `summary.json`.
+`decisionformer data split` holds out 10% for calibration and 10% for dev by default (`--holdout NAME=FRACTION`),
+keeping whole families together and each task's share equal in every split; the source is not modified.
+`decisionformer data check dev=dev.jsonl calibration=calibration.jsonl train=train.jsonl` finds leakage between
+splits.
 
 ### Fine-tuning modes
 
@@ -207,13 +232,14 @@ finetune:
 
 The LoRA block is checked against peft when the config loads. `all-linear` leaves mixture-of-experts routers
 out. The decision head always trains fully, with its own `train.head_lr`. Full fine-tuning also supports
-`freeze_embeddings`, `freeze_layers: "0-7"` and `layerwise_lr_decay`.
+`freeze_embeddings`, `freeze_layers: "0-7"` and `layerwise_lr_decay`. Merged exports keep the base checkpoint's
+dtype.
 
 ### Heads
 
 | head | what it does | good for |
 |---|---|---|
-| `code_readout` | Scores the answer codes (`A`, `B`, ... `ZZ`) at the last prompt token, initialized from the LM head | Decoders; up to 255 options; strong from step 0; the standard, servable format |
+| `code_readout` | Scores the answer codes (`A`, `B`, ... `ZZ`) at the last prompt token, initialized from the LM head | Decoders; up to 255 options; strong from step 0; the standard, servable layout |
 | `lm_verbalizer` | The frozen LM head restricted to the codes, with no new parameters | Zero-shot baselines |
 | `option_scoring` | Pools each option's own tokens and scores it with a shared MLP | Encoders; any number of options; order-invariant |
 | `fixed_softmax` | A classifier over a fixed `labels` list | A fixed label set |
@@ -227,8 +253,7 @@ its own pooler (`decision_token`, `last_token`, `cls`, `mean`, `attention`, `opt
 
 `data.prompt.style` picks the prompt: `d3` (the default: Decision 3.0's byte-exact prompt, servable by vLLM) or
 `autojev` (AutoJev's). Decoders use the tokenizer's own chat template, and `chat_template_kwargs` defaults to
-`{enable_thinking: false}`. Prompts are never truncated: a request that does not fit is refused, as the Decision
-Index requires. Register your own format with `decisionformer.register_format`.
+`{enable_thinking: false}`. Register your own format with `decisionformer.register_format`.
 
 ### Decoder attention
 
@@ -240,112 +265,11 @@ Index requires. Register your own format with `decisionformer.register_format`.
 
 Bidirectional mode uses transformers' own switches (`is_causal=False` on the text decoder only), so SDPA,
 flash and sliding-window kernels all respect it, and a vision tower keeps its own attention. Conformance tests
-check every family in `tests/test_attention.py`. A causally pretrained decoder needs real training to benefit:
-in our MNLI tests, switching SmolLM2-360M to bidirectional without adaptation stayed near chance where causal
-reached 0.80 (`docs/benchmarks.md`). Keep `causal` unless you have a reason and a baseline to compare against.
+check every family in `tests/test_attention.py`. Compare against a causal baseline before adopting it: in our
+MNLI tests, SmolLM2-360M made bidirectional without adaptation stayed near chance where causal reached 0.80
+(`docs/benchmarks.md`).
 
-## Load and use
-
-```python
-from decisionformer import AutoDecisionModel
-
-model = AutoDecisionModel.from_pretrained("runs/my-decider/best", device="cuda")
-response = model.decide(state, questions)              # one request
-responses = model.decide_many([{"state": ..., "questions": ...}, ...])
-```
-
-`from_pretrained` loads decisionformer checkpoints and the other checkpoints of the standard, such as Decision
-3.0 (`vllm-sr/d3*`) and AutoJev exports, with each one's own prompt, attention mode and temperatures. On
-`vllm-sr/d3-edge` it reproduces the checkpoint's reference runtime exactly (identical probabilities, BF16, one
-question per pass). Batching several questions per pass changes BF16 rounding by up to 0.008, as in the runtime itself.
-
-```bash
-decisionformer predict runs/my-decider/best requests.jsonl --output responses.jsonl
-decisionformer eval runs/my-decider/best data/dev.jsonl --predictions dev.predictions.jsonl
-decisionformer compare a.predictions.jsonl b.predictions.jsonl     # paired bootstrap over families
-```
-
-## Upload
-
-Checkpoints are plain Hugging Face model repos: the backbone's `config.json` and safetensors, the tokenizer,
-`decision_config.json`, `readout.safetensors` (or `heads.safetensors` for the other heads) and a model card.
-
-```bash
-decisionformer push runs/my-decider/best my-org/my-decider          # private unless --public
-```
-
-```python
-model.push_to_hub("my-org/my-decider")
-```
-
-## Serve
-
-```bash
-pip install "decisionformer[serve]"
-decisionformer serve my-org/my-decider --port 8000                  # transformers backend
-curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
-  "state": "I was charged twice for my subscription this month.",
-  "questions": {
-    "angry": {"type": "noul", "instructions": "Is the customer angry?"}
-  }
-}'
-```
-
-The server takes the same `state` and `questions` as `decide` and returns the same response, with `id`, `object`
-and `created` fields added, in the same shape as the other System One servers. It refuses over-long requests with HTTP 422 and the phrases the Decision Index counts as unsupported,
-and it can require an API key: `--api-key-env MY_KEY_VAR` reads the key from that variable.
-
-**vLLM backend.** For code-readout checkpoints on a Qwen3.5 backbone (the Decision 3.0 contract), vLLM can
-compute the model while DecisionFormer keeps the prompt, temperatures and answers, so both backends answer the
-same way:
-
-```bash
-pip install "decisionformer[vllm]"
-decisionformer serve my-org/my-qwen35-decider --backend vllm
-```
-
-Other checkpoints (encoders, other decoder families, non-readout heads, prefix attention) fail with a clear
-`UnsupportedBackend` error that points to the default backend. On `vllm-sr/d3-edge` in causal mode (RTX 2060
-SUPER, FP16), the vLLM backend matched the FP32 transformers backend to within 0.001 per probability, with
-identical choices, at a median of 30 ms per 3-question request. vLLM's non-causal attention kernels need more
-shared memory than Turing GPUs have, so non-causal checkpoints need an Ampere or newer GPU on this backend.
-
-## Decision Index
-
-Run any checkpoint through the [Decision Index](https://huggingface.co/spaces/multimodalart/jev-decision-index)
-kit in-process:
-
-```bash
-pip install "decision-index @ git+https://github.com/apolinario/decision-index"
-python -m decision_index pipeline --engine decisionformer.integrations.decision_index:DecisionFormerEngine \
-    --option model=my-org/my-decider --out runs/index-my-decider
-```
-
-Or serve it with `decisionformer serve` and use the kit's `http` engine. Requests that do not fit are reported as
-unsupported, never truncated.
-
-## Tested models
-
-`tests/test_zoo.py` fine-tunes a tiny random checkpoint of each family below, exports it, reloads it with
-`AutoDecisionModel` and checks the response against the Decision Index's rules. Newest families first:
-
-* **Decoders, hybrid linear attention:** Qwen3.5 (saved whole, with its vision tower), Qwen3-Next.
-* **Decoders, mixture of experts:** GPT-OSS, Llama 4, DeepSeek-V3, Qwen3-MoE, Granite-MoE, OLMoE, Phi-MoE, Mixtral.
-* **Decoders, dense:** Gemma 4, Gemma 3, Qwen3, SmolLM3, Seed-OSS, EXAONE 4, GLM-4, Ministral, Cohere 2, Hunyuan,
-  OLMo 2, Granite, Phi-3, Qwen2, Gemma 2, Gemma, Mistral, Llama, Phi, StableLM, Falcon, GPT-NeoX, GPT-2.
-* **Encoders:** ModernBERT, EuroBERT, DeBERTa-v3 (and v1/v2), XLM-RoBERTa, RoBERTa, ELECTRA, ALBERT, DistilBERT,
-  BERT, T5 and mT5 (the encoder).
-
-Encoder-decoder models without a standalone text encoder in transformers (BART) are refused with a clear error.
-
-## Measured results
-
-On one 8 GB RTX 2060 SUPER in FP16, after one epoch of 8k MNLI examples: Qwen3-0.6B with LoRA and `code_readout`
-went from 0.34 zero-shot to **0.80** dev accuracy (calibrated ECE 0.033). QLoRA reached 0.795, SmolLM2-360M with
-`option_scoring` 0.796, and ModernBERT-base 0.675. Configs, full tables and the bidirectional results are in
-[`docs/benchmarks.md`](docs/benchmarks.md).
-
-## Multi-GPU (DDP)
+### Multi-GPU (DDP)
 
 Launch with `torchrun`. NCCL is used on GPUs and gloo on CPU. Every rank computes the same step plan with
 balanced token counts. Ranks with fewer micro-batches run zero-weight padding batches, so synchronization never
@@ -360,10 +284,43 @@ process for 1, 2 and 3 ranks). `train.shard_optimizer_states: true` adds ZeRO-1,
 | LoRA (bf16 base) | 14B comfortably, 30B tight |
 | QLoRA (4-bit base) | 30B comfortably, 70B tight |
 
+## Evaluate, upload and benchmark
+
+```bash
+decisionformer eval runs/my-decider/best data/dev.jsonl --predictions dev.predictions.jsonl
+decisionformer predict runs/my-decider/best requests.jsonl --output responses.jsonl
+decisionformer compare a.predictions.jsonl b.predictions.jsonl       # paired bootstrap over families
+decisionformer push runs/my-decider/best my-org/my-decider            # private unless --public
+```
+
+Checkpoints are plain Hugging Face model repos: the backbone's `config.json` and safetensors, the tokenizer,
+`decision_config.json`, `readout.safetensors` (or `heads.safetensors` for the other heads) and a model card. In
+Python, `model.push_to_hub("my-org/my-decider")` does the same.
+
+`from_pretrained` also loads the other checkpoints of this standard, such as Decision 3.0 (`vllm-sr/d3*`) and
+AutoJev exports, with each one's own prompt, attention mode and temperatures. On `vllm-sr/d3-edge` it reproduces
+the checkpoint's reference runtime exactly (identical probabilities in BF16, one question per pass).
+
+Run any checkpoint through the [Decision Index](https://huggingface.co/spaces/multimodalart/jev-decision-index)
+kit in-process, or serve it and use the kit's `http` engine:
+
+```bash
+pip install "decision-index @ git+https://github.com/apolinario/decision-index"
+python -m decision_index pipeline --engine decisionformer.integrations.decision_index:DecisionFormerEngine \
+    --option model=my-org/my-decider --out runs/index-my-decider
+```
+
+## Measured results
+
+On one 8 GB RTX 2060 SUPER in FP16, on MNLI: Qwen3-0.6B with LoRA and `code_readout` went from 0.36 zero-shot to
+**0.83** dev accuracy in 250 steps (calibrated ECE 0.042), and Qwen3.5-0.8B with QLoRA and bidirectional attention
+reached **0.84** in 150 steps. The vLLM backend matched the transformers backend to within 0.001 per probability, with identical choices,
+at a median of 30 ms per 3-question request. Configs and full tables are in [`docs/benchmarks.md`](docs/benchmarks.md).
+
 ## Development
 
 ```bash
-uv venv && uv pip install -e ".[dev,data]"
+pip install -e ".[dev,data]"
 pytest -q                 # offline, tiny random models: about 2 minutes on a laptop CPU
 pytest -q -m "not slow"   # unit and attention-conformance tests only
 ruff check src tests
@@ -374,8 +331,8 @@ training (`configs/recipes/adapt_mntp.yaml`). A short stage did not help in our 
 
 ## Roadmap
 
-FSDP2 for full fine-tuning beyond the DDP limits, image and video inputs, several questions per sequence, and
-more heads (`multi_label`, `regression`).
+FSDP2 for full fine-tuning beyond the DDP limits, encoding a request's state once for all of its questions,
+image and video inputs, and more heads (`multi_label`, `regression`).
 
 ## License and acknowledgements
 
