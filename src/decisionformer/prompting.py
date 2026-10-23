@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import string
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from decisionformer.schema import Decision
 MAX_CODES = 255
 _CODE_PROBE = "Choose an option."
 _PLAIN_SUFFIX = "\nAnswer:"
+
+logger = logging.getLogger(__name__)
 
 
 class ContextLengthError(ValueError):
@@ -103,9 +106,13 @@ class PromptBuilder:
                 raise ValueError("Code-token heads need a decoder backbone")
             self.codes, self.code_token_ids = answer_codes(tokenizer, self.mode, self.chat_template_kwargs,
                                                            max_options)
+            if len(self.codes) < 2:
+                raise ValueError("The tokenizer has fewer than two single-token answer codes; use a head that "
+                                 "does not read code tokens (option_scoring, fixed_softmax, binary, ordinal)")
             if len(self.codes) < max_options:
-                raise ValueError(f"The tokenizer has only {len(self.codes)} single-token answer codes; "
-                                 "lower data.max_options")
+                logger.warning("The tokenizer has %d single-token answer codes, so this model answers questions "
+                               "with at most %d options (data.max_options is %d)", len(self.codes),
+                               len(self.codes), max_options)
         else:
             self.codes, self.code_token_ids = candidate_codes()[:max_options], None
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from collections import defaultdict
 from dataclasses import dataclass
@@ -177,6 +178,7 @@ def decision_config(result: BuildResult, config: RunConfig, *, temperatures: dic
         payload["temperature_by_type"] = by_type
     payload["decisionformer"] = {
         "version": __version__, "kind": result.kind, "backbone": backbone_kind,
+        "model_type": unwrap_peft(model.backbone.model).config.model_type,
         "chat_template_kwargs": config.data.prompt.chat_template_kwargs,
         "heads": {name: cfg.model_dump(mode="json", exclude_none=True) for name, cfg in config.model.heads.items()},
         "poolers": {key: cfg.model_dump(mode="json") for key, cfg in result.pooler_configs.items()},
@@ -248,8 +250,10 @@ def model_card(payload: dict[str, Any], config: RunConfig | None = None) -> str:
     """A Hub model card with metadata, usage for decisionformer, vLLM (when servable) and the Decision Index."""
     ext = payload.get("decisionformer", {})
     metrics = ext.get("metrics") or {}
-    servable = payload.get("format_id") == "d3-code-readout-v1"
-    lines = ["---", f"base_model: {payload.get('base_model')}", "library_name: decisionformer",
+    servable = payload.get("format_id") == "d3-code-readout-v1" and ext.get("model_type") == "qwen3_5"
+    base = str(payload.get("base_model") or "")
+    hub_id = re.fullmatch(r"[\w.-]+(/[\w.-]+)?", base) and not Path(base).exists()  # not a local path
+    lines = ["---", *([f"base_model: {base}"] if hub_id else []), "library_name: decisionformer",
              "pipeline_tag: text-classification", "tags:", "- decisionformer", "- decision-model", "- system-one",
              "---", "", "# Decision model", "",
              f"A one-pass decision model fine-tuned from `{payload.get('base_model')}` with "
@@ -271,9 +275,9 @@ def model_card(payload: dict[str, Any], config: RunConfig | None = None) -> str:
               '    "urgent": {"type": "noul", "instructions": "Does this need a reply within the hour?"},', "})",
               "```", "", "Serve it on `/v1/systemone`: `decisionformer serve <this repo>`."]
     if servable:
-        lines += ["", "This checkpoint follows the Decision 3.0 code-readout contract, so vLLM builds with "
-                      "structured-decisions support can also serve it (`vllm serve <this repo>`) when the backbone "
-                      "is Qwen3.5."]
+        lines += ["", "This checkpoint follows the Decision 3.0 code-readout contract on a Qwen3.5 backbone, so vLLM "
+                      "(builds from 2026-10-15 on) can compute it too: `decisionformer serve <this repo> --backend "
+                      "vllm`, or vLLM's own server, `vllm serve <this repo>`."]
     return "\n".join(lines) + "\n"
 
 

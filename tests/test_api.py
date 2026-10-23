@@ -63,7 +63,8 @@ def test_standard_export_loads_and_decides(trained):
     assert config["attention_mode"] == "causal" and config["pooling"] == "last" and len(config["token_ids"]) == 255
     assert set(config["temperature_by_type"]) == {"choice", "noul", "score"}
     assert (best / "readout.safetensors").exists() and (best / "model.safetensors").exists()
-    assert (best / "README.md").read_text().startswith("---\nbase_model:")
+    card = (best / "README.md").read_text()
+    assert card.startswith("---\nlibrary_name: decisionformer"), "a local base model is not a Hub id: no base_model"
     model = AutoDecisionModel.from_pretrained(best, device="cpu", dtype=torch.float32)
     response = model.decide("the large circle is red .", QUESTIONS)
     index_validate(QUESTIONS, response)
@@ -210,3 +211,29 @@ def test_predict_and_eval_commands(trained, data_dir, tmp_path, capsys):
     main(["eval", str(trained / "best"), str(data_dir / "multi_dev.jsonl"), "--device", "cpu"])
     report = json.loads(capsys.readouterr().out)
     assert report["overall"]["count"] == 48 and set(report["types"]) == {"choice", "noul", "score"}
+
+
+def test_push_fills_the_repo_id_into_the_model_card(trained, monkeypatch):
+    import huggingface_hub
+
+    from decisionformer.hub import push_folder
+
+    calls: dict = {}
+
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def create_repo(self, repo_id, private, exist_ok):
+            calls["private"] = private
+
+        def upload_folder(self, repo_id, folder_path, commit_message, ignore_patterns):
+            calls["ignored"] = ignore_patterns
+
+        def create_commit(self, repo_id, commit_message, operations):
+            calls["card"] = operations[0].path_or_fileobj.decode()
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
+    assert push_folder(trained / "best", "org/decider") == "https://huggingface.co/org/decider"
+    assert calls["private"] is True and "README.md" in calls["ignored"]
+    assert 'AutoDecisionModel.from_pretrained("org/decider")' in calls["card"] and "<this repo>" not in calls["card"]

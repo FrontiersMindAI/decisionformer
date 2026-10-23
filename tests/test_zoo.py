@@ -19,7 +19,7 @@ pytestmark = pytest.mark.slow
 
 LORA = {"finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}}}
 # transformers re-wraps the toy word-level tokenizer as Qwen2Tokenizer for these model types, whose pre-tokenizer
-# splits two-letter codes; real Qwen tokenizers have all 255 codes.
+# splits two-letter codes, so only A-Z remain single tokens (real Qwen tokenizers have all 255 codes).
 SINGLE_LETTER_CODES = {"qwen2", "qwen3_5"}
 
 
@@ -28,9 +28,7 @@ def _round_trip(model_root: Path, data_dir: Path, tmp_path: Path, model_type: st
     config = make_config(tmp_path, build_zoo_model(model_root, model_type), data_dir, head=head, steps=4,
                          extra=extra, overrides=[f"data.train={data_dir / 'multi_train.jsonl'}",
                                                  f"data.eval.dev={data_dir / 'multi_dev.jsonl'}",
-                                                 f"data.calibration={data_dir / 'multi_calibration.jsonl'}",
-                                                 *(["data.max_options=26"] if model_type in SINGLE_LETTER_CODES
-                                                   else [])])
+                                                 f"data.calibration={data_dir / 'multi_calibration.jsonl'}"])
     train(config)
     best = Path(config.train.output_dir) / "best"
     decision_config = json.loads((best / "decision_config.json").read_text())
