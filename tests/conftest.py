@@ -212,7 +212,8 @@ ZOO_DECODERS = {
     "qwen3_moe": {"num_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 32, "decoder_sparse_step": 1},
     "olmoe": {"num_experts": 4, "num_experts_per_tok": 2},
     "gpt_oss": {**_MOE, "layer_types": ["sliding_attention", "full_attention"], "sliding_window": 64},
-    "deepseek_v3": {"n_routed_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 32,
+    # multi-head latent attention has as many key/value heads as query heads
+    "deepseek_v3": {"n_routed_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 32, "num_key_value_heads": 4,
                     "first_k_dense_replace": 1, "kv_lora_rank": 16, "q_lora_rank": 16, "qk_rope_head_dim": 8,
                     "qk_nope_head_dim": 8, "v_head_dim": 8, "n_group": 1, "topk_group": 1},
     # hybrid linear attention (Gated DeltaNet) + full attention
@@ -236,8 +237,9 @@ def build_zoo_model(root: Path, model_type: str) -> Path:
     tokenizer = make_tokenizer("encoder" if encoder else "decoder")
     kwargs = dict(_TINY, vocab_size=len(tokenizer), **(ZOO_ENCODERS if encoder else ZOO_DECODERS)[model_type])
     if not encoder:
-        kwargs.update(num_key_value_heads=2, eos_token_id=SPECIALS.index("<|end|>"), bos_token_id=None,
-                      tie_word_embeddings=True, **({} if model_type == "falcon" else {"head_dim": 8}))
+        kwargs = {"num_key_value_heads": 2, **kwargs}
+        kwargs.update(eos_token_id=SPECIALS.index("<|end|>"), bos_token_id=None, tie_word_embeddings=True,
+                      **({} if model_type == "falcon" else {"head_dim": 8}))
     torch.manual_seed(0)
     config = AutoConfig.for_model(model_type, **kwargs)
     if getattr(config, "is_encoder_decoder", False):
