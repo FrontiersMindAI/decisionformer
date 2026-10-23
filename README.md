@@ -324,9 +324,10 @@ truncate and refuse what does not fit instead.
 
 Bidirectional mode uses transformers' own switches (`is_causal=False` on the text decoder only), so SDPA,
 flash and sliding-window kernels all respect it, and a vision tower keeps its own attention. Conformance tests
-check every family in `tests/test_attention.py`. Compare against a causal baseline before adopting it: in our
-MNLI tests, SmolLM2-360M made bidirectional without adaptation stayed near chance where causal reached 0.80
-(`docs/benchmarks.md`).
+check every family in `tests/test_attention.py`. Compare against a causal baseline before adopting it: a causally
+pretrained decoder made bidirectional loses most of what it knows. On deciformer-15k, Qwen3-0.6B reached 0.45 after
+50 steps with bidirectional attention against 0.67 with causal attention, and on MNLI SmolLM2-360M stayed near
+chance where causal reached 0.80 (`docs/benchmarks.md`).
 
 ### Multi-GPU (DDP)
 
@@ -400,3 +401,17 @@ image and video inputs, and more heads (`multi_label`, `regression`).
 Apache-2.0. The option-code readout, prompt layouts, calibration metrics and near-duplicate checks are adapted
 from [AutoJev](https://github.com/denis-pplx/autojev) (MIT; see `NOTICE`). The `d3` prompt and checkpoint
 contract follow Decision 3.0 ([`vllm-sr/d3`](https://huggingface.co/vllm-sr/d3)).
+
+## Citation
+
+If you use DecisionFormer in your work, please cite it:
+
+```bibtex
+@software{decisionformer2026,
+  title  = {{DecisionFormer}: Fine-tune, load and serve one-pass decision models on Hugging Face transformers},
+  author = {{FrontiersMind AI}},
+  year   = {2026},
+  url    = {https://github.com/FrontiersMindAI/decisionformer},
+  note   = {Version 0.2}
+}
+```

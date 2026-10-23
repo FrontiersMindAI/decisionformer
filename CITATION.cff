@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use DecisionFormer in your work, please cite it as below."
+title: "DecisionFormer: Fine-tune, load and serve one-pass decision models on Hugging Face transformers"
+type: software
+authors:
+  - name: "FrontiersMind AI"
+repository-code: "https://github.com/FrontiersMindAI/decisionformer"
+license: Apache-2.0
+version: "0.2.0"
+date-released: "2026-10-24"
+keywords:
+  - decision models
+  - classification
+  - calibration
+  - transformers
+  - fine-tuning
