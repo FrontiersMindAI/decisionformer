@@ -56,7 +56,9 @@ def test_decoders_with_lora(model_root, data_dir, tmp_path, model_type):
 def test_full_finetune_noncausal(model_root, data_dir, tmp_path, model_type, attention):
     config, _ = _round_trip(model_root, data_dir, tmp_path, model_type, head={"type": "code_readout"},
                             extra={"model": {"attention": attention}, "finetune": {"mode": "full"}})
-    assert config["attention_mode"] == "noncausal_full_attention"
+    # the Decision 3.0 layout: last-token code readout under non-causal attention, servable as a standard checkpoint
+    assert config["attention_mode"] == "noncausal_full_attention" and config["pooling"] == "last"
+    assert config["format_id"] == "d3-code-readout-v1"
 
 
 def test_seq2seq_without_a_text_encoder_is_refused(model_root, data_dir, tmp_path):

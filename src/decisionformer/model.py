@@ -99,10 +99,10 @@ def plan_poolers(heads: dict[str, Any], pooler: PoolerConfig, kind: str,
     keys: dict[str, str] = {}
     head_poolers: dict[str, str] = {}
     for name, head in heads.items():
-        level = head_class(head).pooler_level
+        cls = head_class(head)
         chosen = head.pooler or pooler
         if chosen.type == "auto":
-            chosen = PoolerConfig(type=default_pooler_type(kind, attention, level))
+            chosen = PoolerConfig(type=default_pooler_type(kind, attention, cls.pooler_level, cls.needs_code_tokens))
         signature = chosen.key()
         if signature not in keys:
             keys[signature] = f"p{len(keys)}"
@@ -224,9 +224,23 @@ def export_checkpoint(result: BuildResult, config: RunConfig, directory: str | P
     return out
 
 
+def saved_dtype(name: str, revision: str | None = None) -> torch.dtype | None:
+    """The floating-point dtype a checkpoint's weights were saved in, as its config records it (None if unknown)."""
+    from transformers import AutoConfig
+
+    config = AutoConfig.from_pretrained(name, revision=revision)
+    for candidate in (config, getattr(config, "text_config", None)):
+        value = getattr(candidate, "dtype", None) or getattr(candidate, "torch_dtype", None)
+        value = getattr(torch, value, None) if isinstance(value, str) else value
+        if isinstance(value, torch.dtype) and value.is_floating_point:
+            return value
+    return None
+
+
 def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu",
                      dtype: torch.dtype = torch.float32) -> None:
-    """Replace an adapter checkpoint with merged full weights at the root (the standard layout)."""
+    """Replace an adapter checkpoint with merged full weights at the root (the standard layout). The merge runs
+    in `dtype`; the weights are saved in the dtype of the base checkpoint."""
     from peft import PeftModel
 
     from decisionformer.api import Decider
@@ -240,6 +254,8 @@ def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu
     if not isinstance(peft_model, PeftModel):
         raise ValueError("Expected a peft adapter checkpoint")
     merged = peft_model.merge_and_unload()
+    # Saved in the base checkpoint's own dtype (bf16 for most current models), not the merge dtype.
+    merged.to(saved_dtype(payload["base_model"], payload.get("revision")) or dtype)
     merged.save_pretrained(str(out), safe_serialization=True)
     shutil.rmtree(out / "adapter")
     payload["decisionformer"]["backbone"] = "full"

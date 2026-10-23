@@ -78,12 +78,15 @@ class OptionSpanPooler(Pooler):
         return pooled / weights.sum(-1, keepdim=True).clamp_min(1.0)
 
 
-def default_pooler_type(kind: str, attention: str, head_level: str) -> str:
+def default_pooler_type(kind: str, attention: str, head_level: str, reads_codes: bool = False) -> str:
+    """Option heads pool each option's tokens; encoders use [CLS]. On decoders, heads that read answer codes use the
+    answer position in every attention mode (the Decision 3.0 layout: last token, also when non-causal); other
+    heads use the last token under causal attention and the mean otherwise."""
     if head_level == "option":
         return "option_spans"
     if kind == "encoder":
         return "cls"
-    return "decision_token" if attention == "causal" else "mean"
+    return "decision_token" if attention == "causal" or reads_codes else "mean"
 
 
 def build_pooler(config: PoolerConfig, hidden_size: int) -> Pooler:

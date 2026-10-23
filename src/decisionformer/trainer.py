@@ -366,8 +366,8 @@ class Trainer:
         return summary
 
     def _merge_exports(self) -> None:
-        """Turn LoRA exports into full weights (the standard layout). Exact merges in float32 on CPU for models
-        up to ~3B parameters; larger ones merge in bfloat16 to bound memory."""
+        """Turn LoRA exports into full weights (the standard layout), saved in the base checkpoint's dtype. Exact
+        merges in float32 on CPU for models up to ~3B parameters; larger ones merge in bfloat16 to bound memory."""
         size = sum(p.numel() for p in self.model.parameters())
         dtype = torch.float32 if size < 3e9 else torch.bfloat16
         self.model.cpu()

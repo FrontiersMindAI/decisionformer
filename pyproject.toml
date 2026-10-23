@@ -24,6 +24,8 @@ dependencies = [
   "safetensors>=0.4",
   "numpy>=1.26",
   "huggingface_hub>=0.30",
+  "sentencepiece>=0.2",  # with protobuf: tokenizers shipped only as SentencePiece models (DeBERTa-v3, ALBERT)
+  "protobuf>=4",
 ]
 
 [project.optional-dependencies]
