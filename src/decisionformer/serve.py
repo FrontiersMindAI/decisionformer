@@ -152,7 +152,7 @@ def create_app(decider: Any, *, api_key: str | None = None, max_batch: int = 16)
             body = await request.json()
         except ValueError:
             return error(400, "the body must be JSON", "invalid_request")
-        if not isinstance(body, dict) or "questions" not in body:
+        if not isinstance(body, dict) or "questions" not in body or "state" not in body:
             return error(400, "a request needs `state` and `questions`", "invalid_request")
         started = time.perf_counter()
         try:

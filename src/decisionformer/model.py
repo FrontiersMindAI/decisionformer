@@ -179,7 +179,7 @@ def decision_config(result: BuildResult, config: RunConfig, *, temperatures: dic
         "codes": list(builder.codes), "token_ids": list(builder.code_token_ids or []),
         "temperature": float(temperatures.get("default", 1.0)),
         "attention_mode": CHECKPOINT_NAMES.get(result.attention, result.attention),
-        "pooling": "last" if readout else "decisionformer", "max_length": None, "readout_dtype": "float32",
+        "pooling": "last" if readout else "decisionformer", "max_length": config.data.max_length, "readout_dtype": "float32",
     }
     if by_type:
         payload["temperature_by_type"] = by_type

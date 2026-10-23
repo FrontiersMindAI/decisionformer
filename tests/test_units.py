@@ -61,7 +61,7 @@ def test_question_errors(raw, message):
 
 def test_answer_errors():
     with pytest.raises(DecisionInputError, match="not one of the options"):
-        parse_request({"state": "s", "questions": {"q": {"criteria": {"a": None}}}, "gold": {"q": "z"}})
+        parse_request({"state": "s", "questions": {"q": {"type": "choice", "criteria": {"a": None}}}, "gold": {"q": "z"}})
 
 # ---------------------------------------------------------------------------------------------------- formats
 
@@ -473,3 +473,26 @@ def test_local_runs_answer_with_their_run_name(tmp_path):
     best.mkdir(parents=True)
     assert display_name(best, best) == "my-decider"
     assert display_name("org/model", best) == "org/model"
+
+
+def test_questions_need_a_type():
+    with pytest.raises(DecisionInputError, match="needs a `type`"):
+        parse_question("q", {"criteria": ["a", "b"]})
+
+
+def test_config_errors_are_short_and_suggest_fixes(tmp_path, monkeypatch):
+    from pydantic import ValidationError
+
+    monkeypatch.chdir(tmp_path)  # the recipe's relative data paths do not exist here
+
+    from decisionformer.config import check_data_paths, explain
+
+    with pytest.raises(ValidationError) as caught:
+        load_config("deciformer15k_qwen3", ["train.learning_rate=1e-4"])
+    assert explain(caught.value) == "unknown setting train.learning_rate (did you mean train.lr?)"
+    with pytest.raises(ValueError, match="needs the form key=value"):
+        load_config("deciformer15k_qwen3", ["train.lr"])
+    missing = load_config("deciformer15k_qwen3", [f"train.output_dir={tmp_path / 'run'}"])
+    with pytest.raises(FileNotFoundError, match="decisionformer data split hf:FrontiersMind/deciformer-15k"):
+        check_data_paths(missing)
+    assert not (tmp_path / "run").exists()

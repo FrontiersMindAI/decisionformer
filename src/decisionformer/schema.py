@@ -84,7 +84,9 @@ def parse_question(key: str, raw: Any) -> Question:
     where = f"question {key!r}"
     if not isinstance(raw, dict):
         raise DecisionInputError(f"{where}: must be an object")
-    kind = _TYPE_ALIASES.get(str(raw.get("type", "choice")))
+    if "type" not in raw:
+        raise DecisionInputError(f"{where}: needs a `type`: one of {QUESTION_TYPES}")
+    kind = _TYPE_ALIASES.get(str(raw["type"]))
     if kind is None:
         raise DecisionInputError(f"{where}: unknown type {raw.get('type')!r}; use one of {QUESTION_TYPES}")
     criteria = raw.get("criteria", raw.get("options"))

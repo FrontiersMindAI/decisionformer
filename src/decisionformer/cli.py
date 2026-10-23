@@ -16,18 +16,22 @@ from typing import Any
 
 
 def _run_config(args: argparse.Namespace, **options: Any) -> Any:
-    from decisionformer.config import load_config
+    from decisionformer.config import explain, load_config
 
     try:
         return load_config(args.config, args.overrides, **options)
-    except FileNotFoundError as error:
-        raise SystemExit(f"error: {error}") from None
+    except (FileNotFoundError, ValueError) as error:  # pydantic's ValidationError is a ValueError
+        raise SystemExit(f"error: {explain(error)}") from None
 
 
 def _train(args: argparse.Namespace) -> None:
     from decisionformer.trainer import train
 
-    summary = train(_run_config(args))
+    config = _run_config(args)
+    try:
+        summary = train(config)
+    except FileNotFoundError as error:
+        raise SystemExit(f"error: {error}") from None
     if summary:
         print(json.dumps(summary, indent=2))
 
@@ -225,8 +229,11 @@ def _model_options(command: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from decisionformer import __version__
+
     raw = argparse.RawDescriptionHelpFormatter
     parser = argparse.ArgumentParser(prog="decisionformer", description=__doc__, formatter_class=raw)
+    parser.add_argument("--version", action="version", version=f"decisionformer {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
     examples = """examples:
