@@ -6,6 +6,40 @@ A decision model reads a *state* (text or any JSON value) and answers typed ques
 probability for every option, in a single forward pass and with no text generation. That makes it fast, cheap
 and easy to calibrate, which suits routing, moderation, classification, judging, entailment and extraction gates.
 
+## Installation
+
+Python 3.10 or newer, with PyTorch 2.6+ and transformers 5.20+.
+
+**From PyPI**
+
+```bash
+pip install decisionformer
+pip install "decisionformer[serve]"       # with the /v1/systemone server
+```
+
+**From GitHub** (the latest code)
+
+```bash
+pip install "git+https://github.com/FrontiersMindAI/decisionformer.git"
+
+# or, to develop
+git clone https://github.com/FrontiersMindAI/decisionformer.git
+cd decisionformer
+pip install -e ".[dev]"
+```
+
+Optional extras, combined as `pip install "decisionformer[serve,qlora]"`:
+
+| extra | adds |
+|---|---|
+| `serve` | the `/v1/systemone` server (FastAPI, uvicorn) |
+| `qlora` | bitsandbytes, for QLoRA |
+| `vllm` | the vLLM serving backend (a vLLM build from 2026-10-15 or later) |
+| `fla` | fast Gated DeltaNet kernels for Qwen3.5 backbones |
+| `data` | datasets, for the example converters and `hf:` inputs |
+
+## Quickstart
+
 DecisionFormer is to decision models what `transformers` is to language models:
 
 ```python
@@ -63,24 +97,13 @@ response = model.decide(
 
 | | |
 |---|---|
-| **Train** | Any encoder (BERT, RoBERTa, DeBERTa, ModernBERT, XLM-R, T5) or decoder (Llama, Qwen, Gemma, Mistral, Phi, OLMo, SmolLM, GPT-OSS, DeepSeek-V3, Qwen3.5 and more, including mixture-of-experts and hybrid linear-attention models) |
+| **Train** | Any decoder (Qwen3.5, Gemma 4, GPT-OSS, Llama 4, DeepSeek-V3, Qwen3, Mistral, Phi, OLMo, SmolLM and more, including mixture-of-experts and hybrid linear-attention models) or encoder (ModernBERT, EuroBERT, DeBERTa-v3, XLM-R, RoBERTa, BERT, T5) |
 | **Fine-tuning** | `full`, `lora` (every `peft.LoraConfig` option), `qlora` (4- or 8-bit), `head_only` |
 | **Multi-GPU** | DDP through `torchrun`, with gradients identical to single-GPU training, optional ZeRO-1, and exact resume |
 | **Calibration** | Temperature per question type, fitted on a separate fold; ECE, Brier and NLL; constrained checkpoint selection |
 | **Checkpoints** | The shared standard of AutoJev and Decision 3.0: a plain transformers backbone, `decision_config.json` and `readout.safetensors`. Upload with `decisionformer push`, load with `from_pretrained` |
 | **Serve** | `decisionformer serve` on `/v1/systemone`, with transformers or vLLM computing the model |
 | **Benchmark** | A Decision Index engine, and a server that speaks the Index's `http` engine protocol |
-
-## Install
-
-```bash
-pip install -e .              # from a clone: Python >= 3.10, torch >= 2.6, transformers >= 5.20
-pip install -e ".[serve]"     # the /v1/systemone server (FastAPI, uvicorn)
-pip install -e ".[qlora]"     # bitsandbytes for QLoRA
-pip install -e ".[vllm]"      # the vLLM serving backend (a vLLM build from 2026-10-15 or later)
-pip install -e ".[fla]"       # fast Gated DeltaNet kernels for Qwen3.5 backbones
-pip install -e ".[data]"      # datasets, for the example converters and hf: inputs
-```
 
 ## The System One format
 
@@ -258,7 +281,7 @@ model.push_to_hub("my-org/my-decider")
 ## Serve
 
 ```bash
-pip install -e ".[serve]"
+pip install "decisionformer[serve]"
 decisionformer serve my-org/my-decider --port 8000                  # transformers backend
 curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
   "state": "I was charged twice for my subscription this month.",
@@ -277,7 +300,7 @@ compute the model while DecisionFormer keeps the prompt, temperatures and answer
 same way:
 
 ```bash
-pip install -e ".[vllm]"
+pip install "decisionformer[vllm]"
 decisionformer serve my-org/my-qwen35-decider --backend vllm
 ```
 
@@ -304,14 +327,14 @@ unsupported, never truncated.
 ## Tested models
 
 `tests/test_zoo.py` fine-tunes a tiny random checkpoint of each family below, exports it, reloads it with
-`AutoDecisionModel` and checks the response against the Decision Index's rules:
+`AutoDecisionModel` and checks the response against the Decision Index's rules. Newest families first:
 
-* **Encoders:** BERT, RoBERTa, XLM-RoBERTa, ELECTRA, ALBERT, DeBERTa, DeBERTa-v2/v3, DistilBERT, ModernBERT,
-  EuroBERT, T5 and mT5 (encoder).
-* **Decoders:** Llama, Mistral, Ministral, Qwen2, Qwen3, Gemma 1–4, Phi, Phi-3, Granite, OLMo 2, SmolLM3, GLM-4,
-  StableLM, GPT-2, GPT-NeoX, Falcon, Cohere 2, EXAONE 4, Seed-OSS, Hunyuan.
-* **Mixture of experts:** Mixtral, Qwen3-MoE, OLMoE, Granite-MoE, Phi-MoE, Llama 4, GPT-OSS, DeepSeek-V3.
-* **Hybrid linear attention:** Qwen3-Next, Qwen3.5 (saved whole, with its vision tower).
+* **Decoders, hybrid linear attention:** Qwen3.5 (saved whole, with its vision tower), Qwen3-Next.
+* **Decoders, mixture of experts:** GPT-OSS, Llama 4, DeepSeek-V3, Qwen3-MoE, Granite-MoE, OLMoE, Phi-MoE, Mixtral.
+* **Decoders, dense:** Gemma 4, Gemma 3, Qwen3, SmolLM3, Seed-OSS, EXAONE 4, GLM-4, Ministral, Cohere 2, Hunyuan,
+  OLMo 2, Granite, Phi-3, Qwen2, Gemma 2, Gemma, Mistral, Llama, Phi, StableLM, Falcon, GPT-NeoX, GPT-2.
+* **Encoders:** ModernBERT, EuroBERT, DeBERTa-v3 (and v1/v2), XLM-RoBERTa, RoBERTa, ELECTRA, ALBERT, DistilBERT,
+  BERT, T5 and mT5 (the encoder).
 
 Encoder-decoder models without a standalone text encoder in transformers (BART) are refused with a clear error.
 
