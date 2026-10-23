@@ -138,8 +138,8 @@ class Trainer:
             logger.info("No trainable parameters: evaluation-only run (zero-shot baseline)")
             self.evaluate()
             return self._finish()
-        logger.info("Training %d steps (%d per epoch) on %d GPU(s)/process(es)", self.total_steps,
-                    self.steps_per_epoch, state.world_size)
+        logger.info("Training %d steps (%d per epoch) on %d process(es), device %s, precision %s", self.total_steps,
+                    self.steps_per_epoch, state.world_size, state.device.type, self.precision)
         if config.eval.at_start and self.step == 0:
             self.evaluate()
         window_loss, window_count, window_start = 0.0, 0.0, time.monotonic()

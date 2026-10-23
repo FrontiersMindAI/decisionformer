@@ -128,18 +128,20 @@ decisionformer serve vllm-sr/d3-edge --backend vllm
 ## Supported backbones
 
 Every family below is fine-tuned, exported, reloaded and checked against the Decision Index's response rules in
-`tests/test_zoo.py`. Newest first:
+`tests/test_zoo.py`, newest first within each group:
 
 | | families |
 |---|---|
-| **Decoders, hybrid linear attention** | Qwen3.5 (saved whole, with its vision tower), Qwen3-Next |
-| **Decoders, mixture of experts** | GPT-OSS, Llama 4, DeepSeek-V3, Qwen3-MoE, Granite-MoE, OLMoE, Phi-MoE, Mixtral |
 | **Decoders, dense** | Gemma 4, Gemma 3, Qwen3, SmolLM3, Seed-OSS, EXAONE 4, GLM-4, Ministral, Cohere 2, Hunyuan, OLMo 2, Granite, Phi-3, Qwen2, Gemma 2, Gemma, Mistral, Llama, Phi, StableLM, Falcon, GPT-NeoX, GPT-2 |
+| **Decoders, mixture of experts** | GPT-OSS, Llama 4, DeepSeek-V3, Qwen3-MoE, Granite-MoE, OLMoE, Phi-MoE, Mixtral |
+| **Decoders, hybrid linear attention** | Qwen3.5 (saved whole, with its vision tower), Qwen3-Next |
 | **Encoders** | ModernBERT, EuroBERT, DeBERTa-v3 (and v1/v2), XLM-RoBERTa, RoBERTa, ELECTRA, ALBERT, DistilBERT, BERT, T5 and mT5 (the encoder) |
 
-Decoders read the answer as a code token (`A`, `B`, ...) at the end of the prompt, which works from step 0;
-encoders score each option. Encoder-decoder models without a standalone text encoder in transformers (BART) are
-refused with a clear error.
+Backbones are the architectures built into Hugging Face transformers, loaded with its `Auto` classes and saved with
+`save_pretrained`; decisionformer has no model code of its own. Hub models that need their own modeling code
+(`trust_remote_code`) are not supported. Decoders read the answer as a code token (`A`, `B`, ...) at the end of
+the prompt, which works from step 0; encoders score each option. Encoder-decoder models without a standalone text
+encoder in transformers (BART) are refused with a clear error.
 
 ## Fine-tune
 
@@ -173,6 +175,25 @@ train:
 A run writes `runs/<name>/best` and `last`: finished checkpoints in the standard Hugging Face layout, ready for
 `from_pretrained`, `serve` and `push`. It also writes `metrics.jsonl`, per-example predictions at every
 evaluation, resumable state and `summary.json`.
+
+### On a laptop (Mac or Linux)
+
+A small model trains on a laptop. This recipe fully fine-tunes SmolLM2-135M-Instruct on deciformer-15k for 300
+steps:
+
+```bash
+pip install "decisionformer[data]"
+decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+decisionformer train configs/recipes/local_smollm2.yaml
+decisionformer serve runs/local-smollm2-135m/best        # try it on /v1/systemone
+```
+
+The device is picked automatically: a CUDA GPU, then Apple silicon (MPS), then the CPU. Set
+`DECISIONFORMER_DEVICE=cpu` to force the CPU. On MPS and CPU, training runs in float32. The recipe keeps memory
+low with micro-batches of 4, at most 4,096 tokens per micro-batch and gradient checkpointing: on a 6-core CPU it
+peaked at 3.7 GB of memory and took about 15 s per step. If memory is still tight, lower them:
+`train.micro_batch_size=2 train.token_budget=2048`. A checkpoint is saved every 100 steps, and
+rerunning the same command resumes from it.
 
 ### Training data
 
@@ -272,7 +293,9 @@ its own pooler (`decision_token`, `last_token`, `cls`, `mean`, `attention`, `opt
 
 `data.prompt.style` picks the prompt: `d3` (the default: Decision 3.0's byte-exact prompt, servable by vLLM) or
 `autojev` (AutoJev's). Decoders use the tokenizer's own chat template, and `chat_template_kwargs` defaults to
-`{enable_thinking: false}`. Register your own format with `decisionformer.register_format`.
+`{enable_thinking: false}`. Register your own format with `decisionformer.register_format`. Training examples
+longer than `data.max_length` have the end of their state cut (`data.overflow`); loaded and served models never
+truncate and refuse what does not fit instead.
 
 ### Decoder attention
 

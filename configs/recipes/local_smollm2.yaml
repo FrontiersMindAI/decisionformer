@@ -1,0 +1,34 @@
+# Fine-tune on a laptop (Mac or Linux): SmolLM2-135M-Instruct on FrontiersMind/deciformer-15k, full fine-tuning.
+#   decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+#   decisionformer train configs/recipes/local_smollm2.yaml
+# The device is picked automatically: a CUDA GPU, else Apple silicon (MPS), else CPU; set DECISIONFORMER_DEVICE=cpu
+# to force the CPU. Small micro-batches, a per-batch token budget and gradient checkpointing keep memory low.
+base: ../base.yaml
+
+model:
+  backbone: HuggingFaceTB/SmolLM2-135M-Instruct
+  head: {type: code_readout}
+
+finetune:
+  mode: full
+  gradient_checkpointing: true
+
+data:
+  train: data/deciformer-15k/train.jsonl
+  calibration: data/deciformer-15k/calibration.jsonl
+  eval: {dev: data/deciformer-15k/dev.jsonl}
+  max_length: 1024
+
+train:
+  output_dir: runs/local-smollm2-135m
+  max_steps: 300
+  global_batch_size: 16
+  micro_batch_size: 4
+  token_budget: 4096
+  lr: 5.0e-5
+  head_lr: 1.0e-4
+  eval_every: 100
+  save_every: 100
+
+eval:
+  micro_batch_size: 8

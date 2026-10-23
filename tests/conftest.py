@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import string
 from pathlib import Path
 
 import pytest
 import torch
+
+os.environ.setdefault("DECISIONFORMER_DEVICE", "cpu")  # deterministic CPU runs, also on machines with a GPU or MPS
 
 COLORS = ["red", "blue", "green", "yellow"]
 SHAPES = ["circle", "square", "triangle"]

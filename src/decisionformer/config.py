@@ -76,7 +76,9 @@ class DataConfig(_Strict):
     calibration: str | list[str] | None = None
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     max_length: int = 2048
-    overflow: Literal["error", "truncate_state_end", "truncate_state_start"] = "error"
+    # Training and evaluation prompts longer than max_length: cut the state (default) or fail. Loaded and served
+    # models never truncate; they refuse what does not fit.
+    overflow: Literal["error", "truncate_state_end", "truncate_state_start"] = "truncate_state_end"
     max_options: int = Field(255, ge=2, le=702)
     shuffle_options: bool = True
 

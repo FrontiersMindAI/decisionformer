@@ -392,3 +392,15 @@ def test_training_precision_defaults_to_bf16(monkeypatch):
     assert resolve_dtype(FinetuneConfig(mode="qlora"), "fp16") == torch.float16
     assert resolve_dtype(FinetuneConfig(mode="qlora", quantization={"compute_dtype": "float32"}), "bf16") == torch.float32
     assert resolve_dtype(FinetuneConfig(mode="full", model_dtype="bfloat16"), "bf16") == torch.bfloat16
+
+
+def test_device_choice(monkeypatch):
+    from decisionformer.distributed import pick_device
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    monkeypatch.delenv("DECISIONFORMER_DEVICE", raising=False)
+    assert pick_device().type == "mps", "Apple GPUs train single-process runs"
+    assert pick_device(0, world_size=2).type == "cpu", "multi-process runs (gloo) stay on CPU"
+    monkeypatch.setenv("DECISIONFORMER_DEVICE", "cpu")
+    assert pick_device().type == "cpu"
