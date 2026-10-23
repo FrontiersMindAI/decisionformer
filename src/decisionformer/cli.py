@@ -1,4 +1,4 @@
-"""decisionformer command line: train, eval, predict, serve, push, compare, data check, config (adapt: experimental)."""
+"""decisionformer command line: train, eval, predict, serve, push, compare, data check/split, config (adapt: experimental)."""
 
 from __future__ import annotations
 
@@ -129,6 +129,29 @@ def _data_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _data_split(args: argparse.Namespace) -> None:
+    from collections import Counter
+
+    from decisionformer.datacheck import split_records
+    from decisionformer.schema import read_records
+
+    holdout = {}
+    for item in args.holdout:
+        name, _, share = item.partition("=")
+        if not share:
+            raise SystemExit(f"Use NAME=FRACTION, got {item!r}")
+        holdout[name] = float(share)
+    records = [record for source in args.sources for record in read_records(source)]
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    report = {}
+    for name, rows in split_records(records, holdout, seed=args.seed).items():
+        _write([json.dumps(row, ensure_ascii=False) + "\n" for row in rows], str(out / f"{name}.jsonl"))
+        report[name] = {"records": len(rows), "families": len({str(r.get("family", r.get("id"))) for r in rows}),
+                        "tasks": dict(sorted(Counter(str(r.get("task", "default")) for r in rows).items()))}
+    print(json.dumps(report, indent=2))
+
+
 def _model_options(command: argparse.ArgumentParser) -> None:
     command.add_argument("model", help="decision checkpoint: a local directory or a Hub repo id")
     command.add_argument("--revision")
@@ -194,6 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
                                                  "e.g. index=suite-rows.jsonl.gz dev=dev.jsonl train=train.jsonl")
     check.add_argument("--no-near-duplicates", action="store_true")
     check.set_defaults(handler=_data_check)
+    split = data_commands.add_parser("split", help="Split records into train and held-out sets by whole families")
+    split.add_argument("sources", nargs="+", help=".jsonl, .jsonl.gz or hf:<name>[:<config>]:<split>")
+    split.add_argument("--out", required=True, help="directory for train.jsonl and one file per held-out set")
+    split.add_argument("--holdout", nargs="+", default=["calibration=0.1", "dev=0.1"], metavar="NAME=FRACTION")
+    split.add_argument("--seed", type=int, default=0)
+    split.set_defaults(handler=_data_split)
     return parser
 
 

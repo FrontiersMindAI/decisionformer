@@ -319,3 +319,53 @@ def test_selection_never_picks_non_finite_metrics():
     assert not is_improvement({"accuracy": 0.9, "nll": float("nan")}, None, "accuracy", "max")
     assert not is_improvement({"accuracy": 0.9, "nll": float("inf")}, {"accuracy": 0.1, "nll": 1.0}, "accuracy", "max")
     assert is_improvement({"accuracy": 0.9, "nll": 0.5}, {"accuracy": 0.1, "nll": 1.0}, "accuracy", "max")
+
+
+def test_flat_rows_are_read_as_they_are():
+    """One question per row, as the deciformer pipeline writes them (FrontiersMind/deciformer-15k)."""
+    from decisionformer.schema import parse_request
+
+    nli = {"id": "multinli:1", "task": "multinli", "family": "64036", "dataset": "multinli",
+           "state": '{"premise": "Come and chew a bun with me.", "hypothesis": "I will not eat with you."}',
+           "question": "Assume the premise is true. How does the hypothesis relate to it?", "question_type": "choice",
+           "options": ["entailment", "neutral", "contradiction"],
+           "option_descriptions": ["must be true", "might be true", "cannot be true"],
+           "label": "contradiction", "label_index": 2, "label_code": "C", "soft_target": [0.0, 0.1, 0.9],
+           "prompt": "...", "completion": "C"}
+    (decision,) = parse_request(nli)
+    assert decision.id == "multinli:1" and decision.task == "multinli" and decision.family == "64036"
+    assert decision.question.instructions.startswith("Assume") and decision.option_keys == nli["options"]
+    assert decision.question.descriptions == nli["option_descriptions"]
+    assert decision.label_index == 2 and decision.target == pytest.approx([0.0, 0.1, 0.9])
+    assert decision.meta == {"dataset": "multinli", "prompt": "...", "completion": "C"}
+    # noul options in the other order: labels and soft targets follow the option names
+    noul = {"id": "c:1", "state": "you are an idiot", "question": "Is this comment toxic?", "question_type": "noul",
+            "options": ["true", "false"], "option_descriptions": ["toxic", "fine"], "label": "true",
+            "soft_target": [0.8, 0.2]}
+    (decision,) = parse_request(noul)
+    assert decision.option_keys == ["false", "true"] and decision.question.descriptions == ["fine", "toxic"]
+    assert decision.label_index == 1 and decision.target == pytest.approx([0.2, 0.8])
+    level = {"id": "s:1", "state": "x", "question": "How big?", "question_type": "score",
+             "options": ["small", "medium", "large"], "label_index": 2}
+    (decision,) = parse_request(level)
+    assert decision.question.descriptions == ["small", "medium", "large"] and decision.label_index == 2
+
+
+def test_family_split_keeps_families_whole_and_tasks_balanced():
+    from decisionformer.datacheck import split_records
+
+    records = [{"id": f"{task}:{i}", "task": task, "family": f"{task}-{i // 2}"}
+               for task in ("a", "b") for i in range(400)]
+    splits = split_records(records, {"calibration": 0.1, "dev": 0.1}, seed=0)
+    assert sum(map(len, splits.values())) == len(records)
+    owner = {}
+    for name, rows in splits.items():
+        for row in rows:
+            assert owner.setdefault(row["family"], name) == name, "a family was split"
+    for name, share in (("calibration", 0.1), ("dev", 0.1), ("train", 0.8)):
+        for task in ("a", "b"):
+            count = sum(r["task"] == task for r in splits[name])
+            assert abs(count - share * 400) <= 2, (name, task, count)
+    assert splits == split_records(records, {"calibration": 0.1, "dev": 0.1}, seed=0)
+    with pytest.raises(ValueError):
+        split_records(records, {"dev": 0.6, "calibration": 0.5})

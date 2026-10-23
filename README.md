@@ -117,9 +117,19 @@ out here for reading:
 
 `gold` may also be called `expected` or `answers`. `targets` (soft labels, such as vote shares) and `teachers`
 (probabilities to distill from) are optional, per question. A record with a single `question` and a `label` also
-works. `family` keeps related records together in splits, data checks and bootstrap intervals. Files can be
-`.jsonl`, `.jsonl.gz`, or a Hub dataset written as `hf:<name>[:<config>]:<split>`.
-`decisionformer data check test=test.jsonl dev=dev.jsonl train=train.jsonl` finds leakage between splits.
+works, and so do flat rows with one question each, as the deciformer pipeline writes them: `state`, `question`
+(the instructions), `question_type`, `options`, `option_descriptions`, `label` and `soft_target`. `family` keeps
+related records together in splits, data checks and bootstrap intervals. Files can be `.jsonl`, `.jsonl.gz`, or a
+Hub dataset written as `hf:<name>[:<config>]:<split>`.
+
+```bash
+decisionformer data split hf:my-org/my-data:train --out data/my-data      # train / calibration / dev by family
+decisionformer data check dev=data/my-data/dev.jsonl calibration=data/my-data/calibration.jsonl \
+    train=data/my-data/train.jsonl                                         # leakage between splits
+```
+
+`data split` holds out 10% for calibration and 10% for dev by default (`--holdout NAME=FRACTION ...`), keeping
+whole families together and each task's share equal in every split. The source data is not modified.
 
 ## Fine-tune
 

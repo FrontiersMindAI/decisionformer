@@ -21,7 +21,7 @@ finetune:
     init_lora_weights: true     # true | gaussian | pissa | olora | ...
     rank_pattern: {}
     alpha_pattern: {}
-  export: adapter               # adapter | merged
+  export: merged                # merged (plain weights) | adapter
 
 data:
   train: data/mnli/train.jsonl

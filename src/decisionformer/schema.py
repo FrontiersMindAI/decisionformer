@@ -14,7 +14,10 @@ A request is one state plus named, typed questions. Training files add the gold 
 
 `expected` (Decision Index rows) and `answers` are accepted for `gold`. A single-question shorthand is also
 accepted: `{"state", "question": {...}, "label", "target", "teacher"}`, and `options`/`binary` as aliases of
-`criteria`/`noul`. Each question becomes one `Decision`; questions of one request share its family.
+`criteria`/`noul`. Flat rows with one question each, as the deciformer pipeline writes them (for example
+FrontiersMind/deciformer-15k), are read as they are: `{"state", "question": "<instructions>", "question_type",
+"options", "option_descriptions", "label", "soft_target"}`. Each question becomes one `Decision`; questions of one
+request share its family.
 """
 
 from __future__ import annotations
@@ -156,6 +159,32 @@ def _distribution(question: Question, value: Any, where: str) -> list[float] | N
     return [v / total for v in values]
 
 
+FLAT_FIELDS = ("question_type", "options", "option_descriptions", "label_index", "label_code", "soft_target")
+
+
+def _flat_question(key: str, record: dict[str, Any], request_id: str) -> tuple[Question, Any, Any]:
+    """A flat row (one question per row, as the deciformer pipeline writes them): the instruction text in `question`,
+    with `question_type`, `options`, `option_descriptions`, `label` (or `label_index`) and `soft_target`, both in
+    the order of `options`."""
+    where = f"record {request_id}"
+    options = record["options"]
+    descriptions = record.get("option_descriptions") or [None] * len(options or [])
+    if not isinstance(options, list) or not isinstance(descriptions, list) or len(descriptions) != len(options):
+        raise DecisionInputError(f"{where}: `options` and `option_descriptions` must be lists of the same length")
+    kind = record.get("question_type", "choice")
+    criteria = list(options) if _TYPE_ALIASES.get(str(kind)) == "score" else dict(zip(map(str, options), descriptions))
+    question = parse_question(key, {"type": kind, "instructions": record["question"], "criteria": criteria})
+    label = record.get("label")
+    if question.type == "score" or label is None:
+        label = record.get("label_index")
+    soft = record.get("soft_target")
+    if isinstance(soft, list) and question.type != "score":
+        if len(soft) != len(options):
+            raise DecisionInputError(f"{where}: `soft_target` needs one value per option")
+        soft = dict(zip(map(str, options), soft))  # by name, so the order of `options` does not matter
+    return question, label, soft
+
+
 def _first(record: dict[str, Any], *names: str) -> Any:
     for name in names:
         if name in record:
@@ -178,6 +207,12 @@ def parse_request(record: dict[str, Any], index: int = 0) -> list[Decision]:
         per_question = [(q, gold.get(q.key), targets.get(q.key), teachers.get(q.key)) for q in questions]
         task_of = {q.key: q.task or str(record.get("task") or "default") for q in questions}
         ids = {q.key: f"{request_id}:{q.key}" for q in questions}
+    elif isinstance(record.get("question"), str) and "options" in record:
+        key = str(record.get("question_key", "decision"))
+        question, label, target = _flat_question(key, record, request_id)
+        per_question = [(question, label, target, record.get("teacher"))]
+        task_of = {key: str(record.get("task", record.get("suite", "default")) or "default")}
+        ids = {key: request_id}
     elif "question" in record:
         key = str(record.get("question_key", "decision"))
         question = parse_question(key, record["question"])
@@ -189,7 +224,7 @@ def parse_request(record: dict[str, Any], index: int = 0) -> list[Decision]:
     family = record.get("family")
     family = request_id if family is None else str(family)
     known = {"id", "state", "questions", "question", "question_key", "gold", "expected", "answers", "targets",
-             "teachers", "label", "target", "teacher", "task", "family", "suite"}
+             "teachers", "label", "target", "teacher", "task", "family", "suite", *FLAT_FIELDS}
     meta = {k: v for k, v in record.items() if k not in known}
     decisions = []
     for question, label, target, teacher in per_question:
