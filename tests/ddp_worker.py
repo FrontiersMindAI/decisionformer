@@ -8,10 +8,10 @@ import sys
 
 import torch
 
-from deciformer import distributed
-from deciformer.config import load_config
-from deciformer.data import plan_epoch
-from deciformer.trainer import Trainer
+from decisionformer import distributed
+from decisionformer.config import load_config
+from decisionformer.data import plan_epoch
+from decisionformer.trainer import Trainer
 
 
 def padding_step(trainer: Trainer, world_size: int = 3) -> tuple[int, int]:

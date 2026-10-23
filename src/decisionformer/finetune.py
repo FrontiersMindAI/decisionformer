@@ -19,14 +19,24 @@ LORA_DEFAULTS: dict[str, Any] = {"r": 16, "lora_alpha": 32, "lora_dropout": 0.05
 _LAYER_PATTERN = re.compile(r"\.(?:layer|layers|h|block|blocks)\.(\d+)\.")
 
 
-def lora_config_from(lora: dict[str, Any], added_token_ids: list[int]) -> Any:
+def router_modules(model: nn.Module) -> list[str]:
+    """MoE routers built as Linear subclasses (Phi-MoE, Llama 4) return (logits, weights, experts), which LoRA
+    cannot wrap, so "all-linear" leaves them out."""
+    return [name for name, module in model.named_modules()
+            if isinstance(module, nn.Linear) and type(module).forward is not nn.Linear.forward
+            and "router" in type(module).__name__.lower()]
+
+
+def lora_config_from(lora: dict[str, Any], added_token_ids: list[int], model: nn.Module | None = None) -> Any:
     """Build a `peft.LoraConfig` from the `finetune.lora` block. Field names are peft's own."""
     from peft import LoraConfig
 
     kwargs = {**LORA_DEFAULTS, **lora}
     if "task_type" in kwargs:
-        raise ValueError("finetune.lora.task_type is managed by deciformer; remove it")
+        raise ValueError("finetune.lora.task_type is managed by decisionformer; remove it")
     target = kwargs["target_modules"]
+    if target == "all-linear" and model is not None and "exclude_modules" not in kwargs:
+        kwargs["exclude_modules"] = router_modules(model) or None
     if isinstance(target, str) and target in TARGET_PRESETS:
         kwargs["target_modules"] = TARGET_PRESETS[target]
     if kwargs.get("trainable_token_indices", "auto") == "auto":
@@ -83,7 +93,7 @@ def prepare_for_finetuning(model: nn.Module, finetune: Any, *, added_token_ids: 
     if mode in ("lora", "qlora"):
         from peft import get_peft_model
 
-        model = get_peft_model(model, lora_config_from(finetune.lora, added_token_ids))
+        model = get_peft_model(model, lora_config_from(finetune.lora, added_token_ids, model))
     elif mode == "head_only":
         model.requires_grad_(False)
     else:
@@ -112,12 +122,25 @@ def count_parameters(model: nn.Module) -> tuple[int, int]:
     return trainable, total
 
 
-def resolve_dtype(finetune: Any, mixed_precision: str) -> torch.dtype:
-    names = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+
+
+def effective_precision(requested: str, device: torch.device) -> str:
+    """The precision a run trains in: as configured on CUDA GPUs, fp16 (with loss scaling) on GPUs without bf16,
+    and float32 ("no") on CPU."""
+    if requested == "no" or device.type != "cuda":
+        return "no"
+    if requested == "bf16" and not torch.cuda.is_bf16_supported(including_emulation=False):
+        return "fp16"
+    return requested
+
+
+def resolve_dtype(finetune: Any, precision: str) -> torch.dtype:
+    """The dtype the backbone weights are loaded in (for QLoRA, the compute dtype of the 4-bit layers)."""
     if finetune.model_dtype != "auto":
-        return names[finetune.model_dtype]
-    if finetune.mode == "qlora":
-        return names[finetune.quantization.compute_dtype]
+        return DTYPES[finetune.model_dtype]
+    if finetune.mode == "qlora" and finetune.quantization.compute_dtype != "auto":
+        return DTYPES[finetune.quantization.compute_dtype]
     if finetune.mode == "full":
-        return torch.float32
-    return {"bf16": torch.bfloat16, "fp16": torch.float16}.get(mixed_precision, torch.float32)
+        return torch.float32  # master weights; autocast runs the compute in `precision`
+    return {"bf16": torch.bfloat16, "fp16": torch.float16}.get(precision, torch.float32)

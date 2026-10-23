@@ -1,4 +1,4 @@
-"""Convert public datasets into deciformer JSONL: train.jsonl, calibration.jsonl and dev.jsonl.
+"""Convert public datasets into decisionformer JSONL: train.jsonl, calibration.jsonl and dev.jsonl.
 
     python examples/prepare_datasets.py mnli --output data/mnli --train-size 20000
     python examples/prepare_datasets.py boolq --output data/boolq

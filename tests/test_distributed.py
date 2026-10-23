@@ -25,7 +25,7 @@ def _port() -> int:
 
 
 def torchrun(processes: int, *arguments: str) -> None:
-    env = {**os.environ, "DECIFORMER_DEVICE": os.environ.get("DECIFORMER_TEST_DEVICE", "cpu"),
+    env = {**os.environ, "DECISIONFORMER_DEVICE": os.environ.get("DECISIONFORMER_TEST_DEVICE", "cpu"),
            "OMP_NUM_THREADS": "1", "TOKENIZERS_PARALLELISM": "false"}
     command = [sys.executable, "-m", "torch.distributed.run", "--nproc_per_node", str(processes),
                "--master_addr", "127.0.0.1", "--master_port", str(_port()), *arguments]
@@ -35,7 +35,7 @@ def torchrun(processes: int, *arguments: str) -> None:
 
 
 def _yaml(config, path: Path) -> Path:
-    from deciformer.config import dump_config
+    from decisionformer.config import dump_config
 
     path.write_text(dump_config(config))
     return path
@@ -83,11 +83,11 @@ def test_ddp_training_with_sharded_optimizer_and_exact_resume(model_root, data_d
                                  out=name, steps=6,
                                  extra={"train": {"save_every": 3, "stop_after": stop, "resume": "auto",
                                                   "shard_optimizer_states": shard, "eval_every": 3}})
-            torchrun(2, "-m", "deciformer", "train", str(_yaml(config, tmp_path / f"{name}.yaml")))
+            torchrun(2, "-m", "decisionformer", "train", str(_yaml(config, tmp_path / f"{name}.yaml")))
         output = tmp_path / name
         assert (output / "best").exists() and (output / "summary.json").exists()
-        state = load_file(str(output / "last" / "backbone" / "model.safetensors"))
-        state.update(load_file(str(output / "last" / "heads.safetensors")))
+        state = load_file(str(output / "last" / "model.safetensors"))
+        state.update(load_file(str(output / "last" / "readout.safetensors")))
         return state
 
     plain = run("plain", [None], shard=False)

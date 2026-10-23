@@ -1,8 +1,8 @@
 # Shared defaults. Recipes inherit this file with `base: ../base.yaml` and override what they need.
 data:
   max_length: 1024
-  overflow: truncate_state_end
-  max_options: 26
+  overflow: truncate_state_end   # training only: served models refuse over-long requests
+  max_options: 255
   shuffle_options: true
 
 train:

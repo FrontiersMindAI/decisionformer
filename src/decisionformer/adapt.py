@@ -18,17 +18,23 @@ import torch
 from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel
 
-from deciformer import distributed as dist_utils
-from deciformer.attention import apply_attention_mode
-from deciformer.backbone import load_tokenizer
-from deciformer.config import RunConfig
-from deciformer.data import _seed, plan_epoch
-from deciformer.finetune import count_parameters, is_peft, prepare_for_finetuning, resolve_dtype
-from deciformer.inference import autocast
-from deciformer.optim import lr_lambda
-from deciformer.schema import read_records
+from decisionformer import distributed as dist_utils
+from decisionformer.attention import apply_attention_mode
+from decisionformer.backbone import load_tokenizer
+from decisionformer.config import RunConfig
+from decisionformer.data import _seed, plan_epoch
+from decisionformer.finetune import (
+    count_parameters,
+    effective_precision,
+    is_peft,
+    prepare_for_finetuning,
+    resolve_dtype,
+)
+from decisionformer.inference import autocast
+from decisionformer.optim import lr_lambda
+from decisionformer.schema import read_records
 
-logger = logging.getLogger("deciformer.adapt")
+logger = logging.getLogger("decisionformer.adapt")
 
 
 def _texts(config: RunConfig) -> list[str]:
@@ -69,9 +75,10 @@ def adapt(config: RunConfig) -> Path:
     tokenizer = load_tokenizer(model_cfg.backbone, model_cfg.revision, model_cfg.trust_remote_code)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    precision = effective_precision(config.train.mixed_precision, state.device)
     model = AutoModelForCausalLM.from_pretrained(
         model_cfg.backbone, revision=model_cfg.revision, trust_remote_code=model_cfg.trust_remote_code,
-        dtype=resolve_dtype(config.finetune, config.train.mixed_precision),
+        dtype=resolve_dtype(config.finetune, precision),
         attn_implementation=model_cfg.attn_implementation)
     apply_attention_mode(model.base_model, "bidirectional")
     model = prepare_for_finetuning(model, config.finetune, added_token_ids=[]).to(state.device)
@@ -99,7 +106,7 @@ def adapt(config: RunConfig) -> Path:
     steps_per_epoch = len(plans(0))
     total_steps = train.max_steps or train.epochs * steps_per_epoch
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda(train.scheduler, total_steps))
-    scaler = torch.amp.GradScaler(state.device.type, enabled=train.mixed_precision == "fp16")
+    scaler = torch.amp.GradScaler(state.device.type, enabled=precision == "fp16")
 
     def collate(indices: list[int], epoch: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         length = max(lengths[i] for i in indices)
@@ -131,7 +138,7 @@ def adapt(config: RunConfig) -> Path:
             input_ids, attention, labels = (t.to(state.device) for t in (input_ids, attention, labels))
             sync = contextlib.nullcontext() if (i == len(local) - 1 or not state.enabled) else ddp.no_sync()
             with sync:
-                with autocast(state.device, train.mixed_precision):
+                with autocast(state.device, precision):
                     logits = ddp(input_ids=input_ids, attention_mask=attention, use_cache=False).logits
                 # MNTP: the hidden state at position i-1 predicts the masked token at position i.
                 loss = F.cross_entropy(logits[:, :-1].float().reshape(-1, logits.shape[-1]),

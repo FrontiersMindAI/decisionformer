@@ -1,18 +1,45 @@
 # Benchmarks: MNLI on an 8 GB GPU
 
+## v0.2 checks (2026-10-23)
+
+Same GPU and software as below, decisionformer 0.2 (`d3` prompt by default). MNLI dev and calibration sets of 500
+records each (`dev_small.jsonl`, `calibration_small.jsonl`, separated by whole families). Single seed.
+
+| run | backbone | attention | head | fine-tuning | dev accuracy (calibrated) | calibrated ECE |
+|---|---|---|---|---|---|---|
+| `e2_qwen3_lora_code` (unchanged v0.1 config, 250 steps) | Qwen3-0.6B | causal | `code_readout` | LoRA r16 | 0.364 → 0.802 (step 125) → **0.828** (step 250) | 0.042 |
+| QLoRA, 150 steps | Qwen3.5-0.8B | bidirectional | `code_readout` (mean pooler)¹ | QLoRA 4-bit nf4 | 0.362 → 0.804 (step 75) → **0.840** (step 150) | 0.038 |
+
+¹ Before v0.2's final pooler default: code-readout heads now read the last token in every attention mode (the
+Decision 3.0 layout).
+
+**Parity with the Decision 3.0 reference runtime.** `AutoDecisionModel.from_pretrained("vllm-sr/d3-edge")` against
+the checkpoint's own `trust_remote_code` runtime, BF16, four requests (choice, noul and score questions, an empty
+state, a JSON state, a 32-option choice): one question per forward pass, the probabilities are identical (maximum
+difference 0.0). With several questions per pass, padding changes BF16 rounding by up to 0.008 in both
+implementations; in FP32, decisionformer's batched and unbatched results agree within 2e-6.
+
+**vLLM backend.** `vllm-sr/d3-edge` with its attention mode set to causal, served by `decisionformer serve
+--backend vllm` (vLLM 0.32.1 nightly, FP16 on Turing) against decisionformer's transformers backend in FP32: maximum
+probability difference 7.2e-4, identical choices, median 29.6 ms and p80 36.6 ms per 3-question request. vLLM's
+non-causal attention kernels (Triton, FlexAttention) need more shared memory than Turing's 64 KB, so non-causal
+checkpoints need an Ampere or newer GPU on the vLLM backend.
+
+## v0.1 results (2026-10-22)
+
 Measured on 2026-10-22 on one **NVIDIA RTX 2060 SUPER (8 GB, Turing)** with torch 2.14.1+cu130, transformers 5.20.2
 and peft 0.21.2. Turing has no native bf16 and no flash-attention, so every run uses fp16 autocast with SDPA.
 These runs are short (one epoch of 8,000 examples, 250 updates) and use a single seed. Read them as a check that
 each code path learns, not as tuned results.
 
 **Data.** Built with `python examples/prepare_datasets.py mnli --output data/mnli --train-size 8000`. The
-converter removed 356 training records whose premise also appears in `validation_matched`, and `deciformer data
+converter removed 356 training records whose premise also appears in `validation_matched`, and `decisionformer data
 check` then reported no cross-split overlap. Evaluation used the first 1,000 records of `dev.jsonl` and
 temperatures were fitted on the first 1,000 of `calibration.jsonl`. The two are separated by whole families.
 Chance accuracy is 0.33.
 
 **Configs.** `configs/benchmarks/mnli_8gb/`. Run from the repository root, for example
-`deciformer train configs/benchmarks/mnli_8gb/e2_qwen3_lora_code.yaml`.
+`decisionformer train configs/benchmarks/mnli_8gb/e2_qwen3_lora_code.yaml`.
 
 ## Results
 
@@ -70,4 +97,4 @@ on CUDA with an fp32 eager reference, and fits a linear probe on frozen features
   causal mode. Prefer bf16 or fp32 for them.
 
 Recommendation: keep `attention: causal` (the default) unless you can afford a long adaptation stage, and
-compare against the causal baseline with `deciformer compare` before adopting a bidirectional model.
+compare against the causal baseline with `decisionformer compare` before adopting a bidirectional model.

@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from deciformer.finetune import is_embedding_parameter, layer_index, num_layers
+from decisionformer.finetune import is_embedding_parameter, layer_index, num_layers
 
 
 def _no_decay(name: str, parameter: torch.nn.Parameter) -> bool:

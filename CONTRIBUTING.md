@@ -3,9 +3,10 @@
 Thanks for helping. A few conventions keep the platform dependable:
 
 * **Everything is configurable, nothing is magic.** New behaviour gets a config field with a safe default, and
-  `deciformer config` must show it.
+  `decisionformer config` must show it.
 * **Prove claims with tests.** Attention behaviour is checked per model family in `tests/test_attention.py`.
-  Adding a family means adding it to `DECODERS` in `tests/conftest.py`. Distributed changes must keep
+  Adding a family means adding it to `DECODERS` (attention conformance) and to `ZOO_ENCODERS` or
+  `ZOO_DECODERS` (train, export, reload and serve, in `tests/test_zoo.py`) in `tests/conftest.py`. Distributed changes must keep
   `tests/test_distributed.py` passing (single-process and multi-process gradients must match).
 * **Offline tests.** Tests build tiny random models and a word-level tokenizer locally, so CI never downloads
   weights.
@@ -15,8 +16,8 @@ Thanks for helping. A few conventions keep the platform dependable:
 Register it and it becomes available from YAML:
 
 ```python
-from deciformer.heads import Head
-from deciformer.registry import HEADS
+from decisionformer.heads import Head
+from decisionformer.registry import HEADS
 
 @HEADS.register("my_head")
 class MyHead(Head):

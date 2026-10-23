@@ -8,8 +8,8 @@ import pytest
 import torch
 from conftest import DECODERS, build_decoder
 
-from deciformer.attention import apply_attention_mode, check_supported, prefix_attention_mask
-from deciformer.backbone import Backbone
+from decisionformer.attention import apply_attention_mode, check_supported, prefix_attention_mask
+from decisionformer.backbone import Backbone
 
 IMPLEMENTATIONS = ["sdpa", "eager"]
 LENGTH = 12
@@ -121,12 +121,28 @@ def test_bidirectional_checkpoint_reloads_as_causal(model_root, tmp_path):
     assert _same(a[:, :7], b[:, :7])
 
 
-def test_recurrent_layers_are_refused():
-    model = torch.nn.Module()
-    model.config = SimpleNamespace(layer_types=["full_attention", "linear_attention"], _attn_implementation="sdpa")
-    with pytest.raises(ValueError, match="causal by construction"):
-        check_supported(model, "bidirectional")
-    check_supported(model, "causal")
+def test_hybrid_and_recurrent_models():
+    hybrid = torch.nn.Module()
+    hybrid.config = SimpleNamespace(layer_types=["full_attention", "linear_attention"], _attn_implementation="sdpa")
+    check_supported(hybrid, "bidirectional")  # noncausal_full_attention: full layers open, linear layers causal
+    with pytest.raises(NotImplementedError):
+        check_supported(hybrid, "prefix_bidirectional")
+    recurrent = torch.nn.Module()
+    recurrent.config = SimpleNamespace(layer_types=["linear_attention", "mamba"], _attn_implementation="sdpa")
+    with pytest.raises(ValueError, match="needs attention layers"):
+        check_supported(recurrent, "bidirectional")
+    check_supported(recurrent, "causal")
+
+
+def test_vision_tower_keeps_its_attention(model_root):
+    from transformers import AutoModel
+
+    model = AutoModel.from_pretrained(str(build_decoder(model_root, "qwen3_5")))
+    apply_attention_mode(model, "bidirectional")
+    apply_attention_mode(model, "causal")
+    flags = {name: m.is_causal for name, m in model.named_modules() if isinstance(getattr(m, "is_causal", None), bool)}
+    assert all(v is False for k, v in flags.items() if "visual" in k)
+    assert all(v is True for k, v in flags.items() if "language_model" in k)
 
 
 def test_prefix_mask_shapes_and_values():

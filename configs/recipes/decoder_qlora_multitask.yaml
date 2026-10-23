@@ -1,5 +1,5 @@
 # QLoRA (4-bit base) with one head per task. Records choose their head with the `task` field.
-# Requires `pip install deciformer[qlora]` and a CUDA GPU.
+# Requires `pip install decisionformer[qlora]` and a CUDA GPU.
 base: ../base.yaml
 
 model:

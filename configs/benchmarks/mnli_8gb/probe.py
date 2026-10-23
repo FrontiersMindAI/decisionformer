@@ -4,12 +4,12 @@ import sys
 import torch
 from transformers import AutoModel
 
-from deciformer.attention import apply_attention_mode
-from deciformer.backbone import Backbone, load_tokenizer
-from deciformer.config import PromptConfig
-from deciformer.data import Collator, DecisionDataset
-from deciformer.prompting import PromptBuilder, prepare_tokenizer
-from deciformer.schema import load_decisions
+from decisionformer.attention import apply_attention_mode
+from decisionformer.backbone import Backbone, load_tokenizer
+from decisionformer.config import PromptConfig
+from decisionformer.data import Collator, DecisionDataset
+from decisionformer.prompting import PromptBuilder, prepare_tokenizer
+from decisionformer.schema import load_decisions
 
 name = sys.argv[1]
 device = torch.device("cuda")
