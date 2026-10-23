@@ -124,7 +124,7 @@ def load_backbone(model_cfg: Any, finetune_cfg: Any, *, kind: str, attention: st
                               "attn_implementation": model_cfg.attn_implementation}
     if finetune_cfg is not None and finetune_cfg.mode == "qlora":
         quant = finetune_cfg.quantization
-        compute = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[quant.compute_dtype]
+        compute = dtype  # resolve_dtype: the configured compute dtype, or the training precision
         kwargs["quantization_config"] = (
             BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type=quant.quant_type,
                                bnb_4bit_use_double_quant=quant.double_quant, bnb_4bit_compute_dtype=compute)

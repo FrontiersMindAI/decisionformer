@@ -263,21 +263,40 @@ def test_decoders_learn_the_task(model_root, data_dir, tmp_path, name, backbone,
     assert _accuracy(Path(config.train.output_dir)) >= minimum  # chance is 0.25
 
 
-def test_merged_export_keeps_the_base_checkpoint_dtype(model_root, data_dir, tmp_path):
-    """A LoRA run on a bf16 checkpoint exports bf16 weights (merged in fp32), not a float32 copy twice the size."""
-    from safetensors import safe_open
+def _bf16_base(model_root: Path, tmp_path: Path) -> Path:
     from transformers import AutoModelForCausalLM
 
     base = tmp_path / "llama-bf16"
-    AutoModelForCausalLM.from_pretrained(str(build_decoder(model_root, "llama")), dtype=torch.bfloat16).save_pretrained(
-        str(base))
-    shutil.copy(build_decoder(model_root, "llama") / "tokenizer.json", base)
-    shutil.copy(build_decoder(model_root, "llama") / "tokenizer_config.json", base)
-    config = make_config(tmp_path, base, data_dir, head={"type": "code_readout"}, steps=2,
-                         extra={"finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}}})
+    if not base.exists():
+        source = build_decoder(model_root, "llama")
+        AutoModelForCausalLM.from_pretrained(str(source), dtype=torch.bfloat16).save_pretrained(str(base))
+        for name in ("tokenizer.json", "tokenizer_config.json"):
+            shutil.copy(source / name, base)
+    return base
+
+
+def _saved_dtypes(checkpoint: Path) -> tuple[set[torch.dtype], str]:
+    from safetensors import safe_open
+
+    with safe_open(str(checkpoint / "model.safetensors"), "pt") as handle:
+        dtypes = {handle.get_tensor(k).dtype for k in handle.keys()}  # noqa: SIM118
+    return dtypes, json.loads((checkpoint / "config.json").read_text())["dtype"]
+
+
+@pytest.mark.parametrize("mode, export_dtype, expected", [
+    ("lora", "auto", torch.bfloat16),   # merged in fp32, saved like the base checkpoint
+    ("full", "auto", torch.bfloat16),   # fp32 master weights, saved like the base checkpoint
+    ("full", "float32", torch.float32),
+])
+def test_exports_are_saved_in_the_export_dtype(model_root, data_dir, tmp_path, mode, export_dtype, expected):
+    lora = {"lora": {"r": 4, "lora_dropout": 0.0}} if mode == "lora" else {}
+    config = make_config(tmp_path, _bf16_base(model_root, tmp_path), data_dir, head={"type": "code_readout"}, steps=2,
+                         extra={"finetune": {"mode": mode, "export_dtype": export_dtype, **lora}})
     train(config)
     best = Path(config.train.output_dir) / "best"
     assert not (best / "adapter").exists()
-    with safe_open(str(best / "model.safetensors"), "pt") as handle:
-        assert {handle.get_tensor(k).dtype for k in handle.keys()} == {torch.bfloat16}  # noqa: SIM118
-    assert json.loads((best / "config.json").read_text())["dtype"] == "bfloat16"
+    assert _saved_dtypes(best) == ({expected}, str(expected).removeprefix("torch."))
+    from decisionformer import AutoDecisionModel
+
+    AutoDecisionModel.from_pretrained(best, device="cpu", dtype=torch.float32).decide(
+        "the small circle is blue .", {"red": {"type": "noul", "instructions": "Is it red ?"}})

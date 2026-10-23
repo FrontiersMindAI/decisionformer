@@ -19,7 +19,7 @@ from torch.nn.parallel import DistributedDataParallel
 from decisionformer import distributed as dist_utils
 from decisionformer.config import RunConfig, dump_config
 from decisionformer.data import Collator, DecisionDataset, plan_epoch
-from decisionformer.finetune import count_parameters
+from decisionformer.finetune import count_parameters, effective_precision
 from decisionformer.inference import (
     autocast,
     collect_logits,
@@ -32,7 +32,7 @@ from decisionformer.inference import (
 )
 from decisionformer.losses import decision_loss
 from decisionformer.metrics import is_improvement, satisfies
-from decisionformer.model import BuildResult, build_model, export_checkpoint, merge_checkpoint
+from decisionformer.model import BuildResult, build_model, export_checkpoint, export_dtype, merge_checkpoint
 from decisionformer.optim import build_optimizer, lr_lambda
 
 logger = logging.getLogger("decisionformer")
@@ -104,7 +104,11 @@ class Trainer:
             self.optimizer = build_optimizer(self.model, config.train, config.finetune, distributed=self.state.enabled)
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer,
                                                                lr_lambda(config.train.scheduler, self.total_steps))
-        self.scaler = torch.amp.GradScaler(self.state.device.type, enabled=config.train.mixed_precision == "fp16")
+        self.precision = effective_precision(config.train.mixed_precision, self.state.device)
+        if self.precision != config.train.mixed_precision and self.state.device.type == "cuda":
+            logger.warning("This GPU has no bf16 support: training in fp16 with loss scaling "
+                           "(set train.mixed_precision to choose)")
+        self.scaler = torch.amp.GradScaler(self.state.device.type, enabled=self.precision == "fp16")
         self.trainable = [p for p in self.model.parameters() if p.requires_grad]
         self.step = 0
         self.best: dict[str, Any] | None = None
@@ -174,7 +178,7 @@ class Trainer:
             last = i == len(micro_batches) - 1
             sync = contextlib.nullcontext() if (last or not state.enabled) else self.ddp.no_sync()
             with sync:
-                with autocast(state.device, config.train.mixed_precision):
+                with autocast(state.device, self.precision):
                     logits = self.ddp(batch)
                 per_example = decision_loss(logits, batch.targets, batch.option_mask, config.train.loss,
                                             batch.teacher, batch.has_teacher)
@@ -206,7 +210,7 @@ class Trainer:
         rows = collect_logits(self.model, dataset, self.eval_collator, indices, device=self.state.device,
                               micro_batch_size=self.config.eval.micro_batch_size,
                               token_budget=self.config.eval.token_budget,
-                              mixed_precision=self.config.train.mixed_precision)
+                              mixed_precision=self.precision)
         return [row for part in _gather_to_main(rows) for row in part]
 
     def evaluate(self) -> dict[str, Any] | None:
@@ -375,7 +379,7 @@ class Trainer:
             torch.cuda.empty_cache()
         for name in ("best", "last"):
             if (self.output / name).exists():
-                merge_checkpoint(self.output / name, device="cpu", dtype=dtype)
+                merge_checkpoint(self.output / name, device="cpu", dtype=dtype, save_dtype=export_dtype(self.config))
 
 
 def train(config: RunConfig) -> dict[str, Any]:

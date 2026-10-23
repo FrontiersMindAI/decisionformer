@@ -369,3 +369,26 @@ def test_family_split_keeps_families_whole_and_tasks_balanced():
     assert splits == split_records(records, {"calibration": 0.1, "dev": 0.1}, seed=0)
     with pytest.raises(ValueError):
         split_records(records, {"dev": 0.6, "calibration": 0.5})
+
+
+def test_training_precision_defaults_to_bf16(monkeypatch):
+    from decisionformer.config import FinetuneConfig, TrainConfig
+    from decisionformer.finetune import effective_precision, resolve_dtype
+
+    train = TrainConfig(output_dir="x")
+    assert train.mixed_precision == "bf16"
+    finetune = FinetuneConfig()
+    assert finetune.export_dtype == "auto" and finetune.quantization.compute_dtype == "auto"
+    cuda, cpu = torch.device("cuda", 0), torch.device("cpu")
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda including_emulation=True: True)
+    assert effective_precision("bf16", cuda) == "bf16" and effective_precision("fp16", cuda) == "fp16"
+    assert effective_precision("bf16", cpu) == "no", "CPU runs train in float32"
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda including_emulation=True: False)
+    assert effective_precision("bf16", cuda) == "fp16", "GPUs without bf16 fall back to fp16 with loss scaling"
+    assert effective_precision("no", cuda) == "no"
+    # weights: fp32 master weights for full fine-tuning, the training precision for LoRA and QLoRA compute
+    assert resolve_dtype(FinetuneConfig(mode="full"), "bf16") == torch.float32
+    assert resolve_dtype(FinetuneConfig(mode="lora"), "bf16") == torch.bfloat16
+    assert resolve_dtype(FinetuneConfig(mode="qlora"), "fp16") == torch.float16
+    assert resolve_dtype(FinetuneConfig(mode="qlora", quantization={"compute_dtype": "float32"}), "bf16") == torch.float32
+    assert resolve_dtype(FinetuneConfig(mode="full", model_dtype="bfloat16"), "bf16") == torch.bfloat16

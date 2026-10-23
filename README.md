@@ -232,8 +232,27 @@ finetune:
 
 The LoRA block is checked against peft when the config loads. `all-linear` leaves mixture-of-experts routers
 out. The decision head always trains fully, with its own `train.head_lr`. Full fine-tuning also supports
-`freeze_embeddings`, `freeze_layers: "0-7"` and `layerwise_lr_decay`. Merged exports keep the base checkpoint's
-dtype.
+`freeze_embeddings`, `freeze_layers: "0-7"` and `layerwise_lr_decay`.
+
+### Precision
+
+Training runs in bf16 by default. Every part is configurable:
+
+```yaml
+train:
+  mixed_precision: bf16      # bf16 (default) | fp16 (with loss scaling) | no (float32)
+finetune:
+  model_dtype: auto          # weights while training: float32 | bfloat16 | float16
+  export_dtype: auto         # saved checkpoints: auto = the base checkpoint's dtype | float32 | bfloat16 | float16
+  quantization:
+    compute_dtype: auto      # QLoRA compute: auto = follows mixed_precision
+```
+
+With `model_dtype: auto`, LoRA keeps the frozen base in bf16 and QLoRA in 4-bit, and full fine-tuning keeps
+float32 master weights while the compute runs in bf16, as PyTorch AMP does: pure bf16 weights lose small optimizer
+updates. Set `model_dtype: bfloat16` for pure bf16 training. GPUs without bf16 (Turing, V100) fall back to fp16
+with loss scaling and log a warning; CPU runs use float32. Exports are saved in the base checkpoint's dtype (bf16
+for most current models), so a fine-tuned model is the same size as the one it started from.
 
 ### Heads
 

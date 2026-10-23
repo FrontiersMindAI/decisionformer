@@ -25,7 +25,14 @@ from decisionformer import __version__
 from decisionformer.attention import CHECKPOINT_NAMES, resolve_mode
 from decisionformer.backbone import Backbone, context_limit, load_backbone, load_tokenizer, resolve_kind
 from decisionformer.config import PoolerConfig, RunConfig
-from decisionformer.finetune import is_peft, prepare_for_finetuning, resolve_dtype, unwrap_peft
+from decisionformer.finetune import (
+    DTYPES,
+    effective_precision,
+    is_peft,
+    prepare_for_finetuning,
+    resolve_dtype,
+    unwrap_peft,
+)
 from decisionformer.heads import CodeReadoutHead, Head, build_head, head_class
 from decisionformer.losses import MASK_VALUE, masked_logits
 from decisionformer.poolers import Pooler, build_pooler, default_pooler_type
@@ -142,7 +149,7 @@ def build_model(config: RunConfig, device: torch.device, *, training: bool = Tru
     builder = PromptBuilder(tokenizer, config.data.prompt.style, kind, max_length=config.data.max_length,
                             overflow=config.data.overflow, max_options=config.data.max_options,
                             need_code_tokens=need_codes, chat_template_kwargs=config.data.prompt.chat_template_kwargs)
-    dtype = resolve_dtype(finetune, config.train.mixed_precision)
+    dtype = resolve_dtype(finetune, effective_precision(config.train.mixed_precision, device))
     hf_model, code_rows = load_backbone(model_cfg, finetune if training else None, kind=kind, attention=attention,
                                         dtype=dtype, device=device,
                                         code_token_ids=builder.code_token_ids if need_codes else None,
@@ -204,7 +211,11 @@ def export_checkpoint(result: BuildResult, config: RunConfig, directory: str | P
         hf_model.save_pretrained(str(tmp / "adapter"))
         backbone_kind = "adapter"
     else:
-        unwrap_peft(hf_model).save_pretrained(str(tmp), safe_serialization=True)
+        backbone = unwrap_peft(hf_model)
+        target = export_dtype(config)
+        backbone.save_pretrained(str(tmp), safe_serialization=True, state_dict=_cast_state(backbone, target))
+        if target is not None:
+            _record_dtype(tmp / "config.json", target)
         backbone_kind = "full"
     result.tokenizer.save_pretrained(str(tmp))
     if model.readout_only():
@@ -224,11 +235,38 @@ def export_checkpoint(result: BuildResult, config: RunConfig, directory: str | P
     return out
 
 
-def saved_dtype(name: str, revision: str | None = None) -> torch.dtype | None:
+def export_dtype(config: RunConfig) -> torch.dtype | None:
+    """The dtype exported weights are saved in: `finetune.export_dtype`, or the base checkpoint's own (auto)."""
+    if config.finetune.export_dtype != "auto":
+        return DTYPES[config.finetune.export_dtype]
+    return saved_dtype(config.model.backbone, config.model.revision, config.model.trust_remote_code)
+
+
+def _cast_state(model: nn.Module, dtype: torch.dtype | None) -> dict[str, torch.Tensor] | None:
+    """The model's state dict in `dtype` (shared tensors stay shared), or None when nothing needs casting."""
+    state = model.state_dict()
+    if dtype is None or all(v.dtype == dtype for v in state.values() if v.is_floating_point()):
+        return None
+    cast: dict[tuple[Any, ...], torch.Tensor] = {}
+    return {k: cast.setdefault((v.data_ptr(), v.shape, v.stride()), v.detach().to(dtype)) if v.is_floating_point()
+            else v for k, v in state.items()}
+
+
+def _record_dtype(path: Path, dtype: torch.dtype) -> None:
+    """Make config.json (and its sub-configs) name the dtype the weights were saved in."""
+    payload = json.loads(path.read_text())
+    name = str(dtype).removeprefix("torch.")
+    for section in (payload, *(v for v in payload.values() if isinstance(v, dict) and "dtype" in v)):
+        section["dtype"] = name
+        section.pop("torch_dtype", None)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def saved_dtype(name: str, revision: str | None = None, trust_remote_code: bool = False) -> torch.dtype | None:
     """The floating-point dtype a checkpoint's weights were saved in, as its config records it (None if unknown)."""
     from transformers import AutoConfig
 
-    config = AutoConfig.from_pretrained(name, revision=revision)
+    config = AutoConfig.from_pretrained(name, revision=revision, trust_remote_code=trust_remote_code)
     for candidate in (config, getattr(config, "text_config", None)):
         value = getattr(candidate, "dtype", None) or getattr(candidate, "torch_dtype", None)
         value = getattr(torch, value, None) if isinstance(value, str) else value
@@ -238,9 +276,9 @@ def saved_dtype(name: str, revision: str | None = None) -> torch.dtype | None:
 
 
 def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu",
-                     dtype: torch.dtype = torch.float32) -> None:
+                     dtype: torch.dtype = torch.float32, save_dtype: torch.dtype | None = None) -> None:
     """Replace an adapter checkpoint with merged full weights at the root (the standard layout). The merge runs
-    in `dtype`; the weights are saved in the dtype of the base checkpoint."""
+    in `dtype`; the weights are saved in `save_dtype`, by default the dtype of the base checkpoint."""
     from peft import PeftModel
 
     from decisionformer.api import Decider
@@ -254,8 +292,8 @@ def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu
     if not isinstance(peft_model, PeftModel):
         raise ValueError("Expected a peft adapter checkpoint")
     merged = peft_model.merge_and_unload()
-    # Saved in the base checkpoint's own dtype (bf16 for most current models), not the merge dtype.
-    merged.to(saved_dtype(payload["base_model"], payload.get("revision")) or dtype)
+    # Saved in `save_dtype`, else the base checkpoint's own dtype (bf16 for most current models), not the merge dtype.
+    merged.to(save_dtype or saved_dtype(payload["base_model"], payload.get("revision")) or dtype)
     merged.save_pretrained(str(out), safe_serialization=True)
     shutil.rmtree(out / "adapter")
     payload["decisionformer"]["backbone"] = "full"

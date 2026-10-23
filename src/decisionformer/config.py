@@ -85,7 +85,7 @@ class QuantizationConfig(_Strict):
     bits: Literal[4, 8] = 4
     quant_type: Literal["nf4", "fp4"] = "nf4"
     double_quant: bool = True
-    compute_dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
+    compute_dtype: Literal["auto", "bfloat16", "float16", "float32"] = "auto"  # auto: follows train.mixed_precision
 
 
 class FinetuneConfig(_Strict):
@@ -97,7 +97,10 @@ class FinetuneConfig(_Strict):
     lora: dict[str, Any] = Field(default_factory=dict)
     quantization: QuantizationConfig = Field(default_factory=QuantizationConfig)
     export: Literal["adapter", "merged"] = "merged"
+    # Weights while training. auto: float32 master weights for full fine-tuning (compute runs in
+    # train.mixed_precision), the frozen base in the training precision for LoRA, 4-bit for QLoRA.
     model_dtype: Literal["auto", "float32", "bfloat16", "float16"] = "auto"
+    export_dtype: Literal["auto", "float32", "bfloat16", "float16"] = "auto"  # auto: the base checkpoint's dtype
 
 
 class SchedulerConfig(_Strict):
@@ -130,7 +133,8 @@ class TrainConfig(_Strict):
     adam_betas: tuple[float, float] = (0.9, 0.999)
     adam_eps: float = 1e-8
     max_grad_norm: float | None = 1.0
-    mixed_precision: Literal["no", "bf16", "fp16"] = "no"
+    # bf16 (default) | fp16 (with loss scaling) | no (float32). GPUs without bf16 fall back to fp16; CPU runs use float32.
+    mixed_precision: Literal["no", "bf16", "fp16"] = "bf16"
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     loss: LossConfig = Field(default_factory=LossConfig)
     log_every: int = 10

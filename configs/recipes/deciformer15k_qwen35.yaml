@@ -3,7 +3,7 @@
 #   decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
 #   decisionformer train configs/recipes/deciformer15k_qwen35.yaml
 # The export is a Decision 3.0 code readout on Qwen3.5, so `decisionformer serve ... --backend vllm` can serve it.
-# On a GPU without bf16 (Turing), add train.mixed_precision=fp16.
+# Trains in bf16; GPUs without bf16 (Turing, V100) fall back to fp16 automatically.
 base: ../base.yaml
 
 model:
