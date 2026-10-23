@@ -21,6 +21,7 @@ from decisionformer.attention import resolve_mode
 from decisionformer.backbone import Backbone, context_limit, load_backbone, resolve_kind
 from decisionformer.config import HeadConfig, PoolerConfig
 from decisionformer.data import make_batch, split_micro_batches
+from decisionformer.distributed import pick_device
 from decisionformer.formats import get_format
 from decisionformer.heads import CodeReadoutHead, build_head
 from decisionformer.model import DECISION_CONFIG, HEADS, READOUT, DecisionModel, model_card
@@ -90,7 +91,7 @@ class Decider:
         config = json.loads(config_file.read_text())
         ext = config.get("decisionformer") or {}
         style = get_format(prompt or _prompt_name(config))
-        device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        device = torch.device(device) if device else pick_device()
         dtype = dtype or _default_dtype(device)
         tokenizer_dir = root if (root / "tokenizer_config.json").is_file() else root / "processor"
         tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=trust_remote_code)

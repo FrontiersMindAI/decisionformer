@@ -27,17 +27,25 @@ class DistributedState:
         return self.world_size > 1
 
 
+def pick_device(local_rank: int = 0, world_size: int = 1) -> torch.device:
+    """`DECISIONFORMER_DEVICE` (cuda, mps or cpu) when set; otherwise CUDA, then Apple's MPS for single-process
+    runs, then CPU."""
+    wanted = os.environ.get("DECISIONFORMER_DEVICE", "")
+    if wanted in ("", "cuda") and torch.cuda.is_available():
+        index = local_rank % torch.cuda.device_count()
+        torch.cuda.set_device(index)
+        return torch.device("cuda", index)
+    if wanted in ("", "mps") and world_size == 1 and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def setup(backend: str = "auto", timeout_minutes: int = 30) -> DistributedState:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    use_cuda = torch.cuda.is_available() and os.environ.get("DECISIONFORMER_DEVICE", "") != "cpu"
-    if use_cuda:
-        index = local_rank % torch.cuda.device_count()
-        torch.cuda.set_device(index)
-        device = torch.device("cuda", index)
-    else:
-        device = torch.device("cpu")
+    device = pick_device(local_rank, world_size)
+    use_cuda = device.type == "cuda"
     if world_size > 1 and not dist.is_initialized():
         chosen = backend if backend != "auto" else ("nccl" if use_cuda else "gloo")
         kwargs: dict[str, Any] = {"backend": chosen, "timeout": datetime.timedelta(minutes=timeout_minutes)}
