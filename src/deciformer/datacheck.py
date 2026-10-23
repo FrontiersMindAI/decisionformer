@@ -7,6 +7,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
+from deciformer.formats import describe
 from deciformer.schema import Decision, load_decisions
 
 
@@ -63,6 +64,8 @@ def summarize(decisions: list[Decision]) -> dict[str, Any]:
 
 
 def check_splits(splits: dict[str, str], *, near_duplicates: bool = True) -> dict[str, Any]:
+    """Splits in priority order (protected first): report ids, families, identical or near-duplicate states that
+    a later split shares with an earlier one. Works on any request file, including Decision Index suite rows."""
     loaded = {name: load_decisions(path) for name, path in splits.items()}
     report: dict[str, Any] = {"splits": {name: summarize(items) for name, items in loaded.items()}, "problems": []}
     seen_ids: dict[str, str] = {}
@@ -70,12 +73,14 @@ def check_splits(splits: dict[str, str], *, near_duplicates: bool = True) -> dic
     seen_states: dict[str, str] = {}
     index = NearDuplicates()
     for name, items in loaded.items():
+        requests = {d.request_id: describe(d.state) for d in items}  # questions of a request share its state
         families = {d.family for d in items if d.family is not None}
-        states = {_digest(_normalized(d.state)): d.id for d in items}
+        states = {_digest(_normalized(text)): rid for rid, text in requests.items()}
         id_clash = sorted({d.id for d in items if d.id in seen_ids})
         family_clash = sorted(f for f in families if f in seen_families)
         state_clash = sorted(states[s] for s in states if s in seen_states)
-        near = sorted(d.id for d in items if near_duplicates and index.match(d.state) is not None) if seen_ids else []
+        near = sorted(rid for rid, text in requests.items()
+                      if near_duplicates and seen_ids and index.match(text) is not None)
         for kind, values in (("id", id_clash), ("family", family_clash), ("identical_state", state_clash),
                              ("near_duplicate_state", near)):
             if values:
@@ -83,8 +88,9 @@ def check_splits(splits: dict[str, str], *, near_duplicates: bool = True) -> dic
                                            "examples": values[:5]})
         for d in items:
             seen_ids.setdefault(d.id, name)
-            if near_duplicates:
-                index.add(d.state, name)
+        if near_duplicates:
+            for text in requests.values():
+                index.add(text, name)
         for f in families:
             seen_families.setdefault(f, name)
         for s in states:

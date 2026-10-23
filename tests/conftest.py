@@ -12,23 +12,26 @@ import torch
 
 COLORS = ["red", "blue", "green", "yellow"]
 SHAPES = ["circle", "square", "triangle"]
+SIZES = ["tiny", "small", "medium", "large", "huge"]
 FILLER = ["the", "a", "object", "is", "very", "small", "large", "near", "far", "today", "here", "there", "and"]
 SPECIALS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "<|system|>", "<|user|>", "<|assistant|>", "<|end|>",
             "<|decision|>"]
 CHAT_TEMPLATE = ("{% for m in messages %}<|{{ m['role'] }}|>\n{{ m['content'] }}<|end|>\n{% endfor %}"
                  "{% if add_generation_prompt %}<|assistant|>\n{% endif %}")
 DECODERS = ["llama", "mistral", "qwen2", "qwen3", "gemma", "gemma2", "gemma3_text", "phi3", "granite", "olmo2",
-            "smollm3"]
+            "smollm3", "gemma4_text", "qwen3_5"]
 
 
 def _corpus() -> list[str]:
-    from deciformer.config import DEFAULT_SYSTEM, DEFAULT_USER_TEMPLATE, PromptConfig
+    from deciformer.formats import FORMATS
 
-    prompt = PromptConfig()
-    lines = [DEFAULT_SYSTEM, DEFAULT_USER_TEMPLATE, prompt.default_instructions, prompt.answer_instruction,
-             prompt.plain_suffix, " ".join(string.ascii_uppercase), " ".join(str(i) for i in range(10)),
-             " ".join(COLORS + SHAPES + FILLER), "What is the color ? What is the shape ? Is it red ? true false "
-             "Yes No positive negative neutral bad ok good great x _ : , . ? ! - ( ) [ ] { } \" '"]
+    lines = [text for fmt in FORMATS.values() for text in (fmt.system, fmt.closing, fmt.default_instructions,
+                                                          *fmt.noul_descriptions, fmt.empty_state or "")]
+    two_letter = " ".join(a + b for a in string.ascii_uppercase for b in string.ascii_uppercase)
+    lines += ["State: Question: Options: Answer:", " ".join(string.ascii_uppercase), two_letter,
+              " ".join(str(i) for i in range(10)),
+              " ".join(COLORS + SHAPES + SIZES + FILLER), "What is the color ? What is the shape ? Is it red ? How big ? "
+              "true false Yes No positive negative neutral bad ok good great x _ : , . ? ! - ( ) [ ] { } \" ' null"]
     return lines * 3
 
 
@@ -71,7 +74,24 @@ def build_decoder(root: Path, model_type: str, plain: bool = False) -> Path:
     if plain:
         tokenizer.chat_template = None
     torch.manual_seed(0)
-    model = AutoModelForCausalLM.from_config(_decoder_config(model_type, len(tokenizer)))
+    if model_type == "qwen3_5":  # hybrid Gated DeltaNet + full attention, saved as the multimodal model it ships as
+        from transformers import AutoConfig, AutoModelForImageTextToText
+
+        text = dict(vocab_size=len(tokenizer), hidden_size=32, intermediate_size=64, num_hidden_layers=4,
+                    num_attention_heads=4, num_key_value_heads=2, head_dim=8, max_position_embeddings=512,
+                    pad_token_id=0, tie_word_embeddings=True, linear_num_value_heads=4, linear_num_key_heads=2,
+                    linear_key_head_dim=8, linear_value_head_dim=8,
+                    layer_types=["linear_attention", "full_attention", "linear_attention", "full_attention"])
+        config = AutoConfig.for_model("qwen3_5", text_config=text, tie_word_embeddings=True, vision_config=dict(
+            depth=1, hidden_size=32, intermediate_size=64, num_heads=4, out_hidden_size=32))
+        model = AutoModelForImageTextToText.from_config(config)
+    elif model_type == "gemma4_text":
+        config = _decoder_config(model_type, len(tokenizer))
+        config.layer_types = ["sliding_attention", "full_attention"]
+        config.sliding_window = 64
+        model = AutoModelForCausalLM.from_config(config)
+    else:
+        model = AutoModelForCausalLM.from_config(_decoder_config(model_type, len(tokenizer)))
     model.save_pretrained(str(path))
     tokenizer.save_pretrained(str(path))
     return path
@@ -110,21 +130,41 @@ def model_root(tmp_path_factory) -> Path:
     return tmp_path_factory.mktemp("models")
 
 
+def _state(rng: random.Random, long_tail: bool) -> tuple[str, str, str, str]:
+    color, shape, size = rng.choice(COLORS), rng.choice(SHAPES), rng.choice(SIZES)
+    extra = rng.choice([0, 0, 0, 40, 120]) if long_tail else 0
+    words = [rng.choice(FILLER) for _ in range(rng.randint(2, 8) + extra)]
+    middle = ["the", size, shape, "is", color]
+    return " ".join(words[: len(words) // 2] + middle + words[len(words) // 2:]) + " .", color, shape, size
+
+
 def synthetic_records(count: int, seed: int, *, kind: str = "choice", long_tail: bool = False) -> list[dict]:
+    """Single-question records (the shorthand format): `kind` is "choice" (color) or "noul" (is it red)."""
     rng = random.Random(seed)
     records = []
     for i in range(count):
-        color, shape = rng.choice(COLORS), rng.choice(SHAPES)
-        extra = rng.choice([0, 0, 0, 40, 120]) if long_tail else 0
-        words = [rng.choice(FILLER) for _ in range(rng.randint(2, 8) + extra)]
-        state = " ".join(words[: len(words) // 2] + ["the", shape, "is", color] + words[len(words) // 2:]) + " ."
-        if kind == "binary":
+        state, color, _, _ = _state(rng, long_tail)
+        if kind in ("noul", "binary"):
             records.append({"id": f"{seed}-{i}", "state": state, "family": f"f{seed}-{i // 2}", "task": "is_red",
-                            "question": {"type": "binary", "instructions": "Is it red ?"}, "label": color == "red"})
+                            "question": {"type": "noul", "instructions": "Is it red ?"}, "label": color == "red"})
         else:
             records.append({"id": f"{seed}-{i}", "state": state, "family": f"f{seed}-{i // 2}", "task": "color",
                             "question": {"type": "choice", "instructions": "What is the color ?",
-                                         "options": dict.fromkeys(COLORS)}, "label": color})
+                                         "criteria": dict.fromkeys(COLORS)}, "label": color})
+    return records
+
+
+def multi_records(count: int, seed: int, *, long_tail: bool = False) -> list[dict]:
+    """System One requests: one state, three typed questions (choice, noul, score), gold answers per question."""
+    rng = random.Random(seed)
+    records = []
+    for i in range(count):
+        state, color, _, size = _state(rng, long_tail)
+        records.append({"id": f"m{seed}-{i}", "state": state, "family": f"m{seed}-{i // 2}", "questions": {
+            "color": {"type": "choice", "instructions": "What is the color ?", "criteria": dict.fromkeys(COLORS)},
+            "red": {"type": "noul", "instructions": "Is it red ?"},
+            "size": {"type": "score", "instructions": "How big ?", "criteria": SIZES}},
+            "gold": {"color": color, "red": color == "red", "size": SIZES.index(size)}})
     return records
 
 
@@ -140,5 +180,8 @@ def data_dir(tmp_path_factory) -> Path:
     write_jsonl(root / "train.jsonl", synthetic_records(96, 1))
     write_jsonl(root / "dev.jsonl", synthetic_records(32, 2))
     write_jsonl(root / "calibration.jsonl", synthetic_records(32, 3))
-    write_jsonl(root / "binary.jsonl", synthetic_records(48, 4, kind="binary"))
+    write_jsonl(root / "binary.jsonl", synthetic_records(48, 4, kind="noul"))
+    write_jsonl(root / "multi_train.jsonl", multi_records(64, 5))
+    write_jsonl(root / "multi_dev.jsonl", multi_records(16, 6))
+    write_jsonl(root / "multi_calibration.jsonl", multi_records(16, 7))
     return root

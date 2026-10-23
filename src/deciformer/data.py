@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
 
 import torch
 
-from deciformer.prompting import PromptBuilder
+from deciformer.prompting import Encoded, PromptBuilder
 from deciformer.schema import Decision, load_decisions
 
 
@@ -56,7 +57,10 @@ class DecisionDataset:
         self.lengths = [len(builder.encode(d).input_ids) for d in decisions]
 
     @classmethod
-    def from_paths(cls, paths: str | Sequence[str], builder: PromptBuilder) -> DecisionDataset:
+    def from_paths(cls, paths: str | Sequence[str], builder: PromptBuilder, *,
+                   labeled_only: bool = False) -> DecisionDataset:
+        """Load requests and expand them into one decision per question. `labeled_only` drops questions without
+        a gold answer or target (Decision Index rows mark unscored questions with a null answer)."""
         paths = [paths] if isinstance(paths, str) else list(paths)
         decisions: list[Decision] = []
         for path in paths:
@@ -64,6 +68,14 @@ class DecisionDataset:
         ids = [d.id for d in decisions]
         if len(set(ids)) != len(ids):
             raise ValueError(f"Duplicate ids across {paths}")
+        if labeled_only:
+            kept = [d for d in decisions if d.label_index is not None or d.target is not None]
+            if not kept:
+                raise ValueError(f"No labeled questions in {paths}")
+            dropped = len(decisions) - len(kept)
+            if dropped:
+                logging.getLogger("deciformer").info("Skipped %d unlabeled questions in %s", dropped, paths)
+            decisions = kept
         return cls(decisions, builder)
 
     def __len__(self) -> int:
@@ -88,48 +100,55 @@ class Collator:
         decisions = [dataset.decisions[i] for i in indices]
         orders = [self.order_for(d, i, epoch) for d, i in zip(decisions, indices)]
         encoded = [self.builder.encode(d, o) for d, o in zip(decisions, orders)]
-        size, length = len(decisions), max(len(e.input_ids) for e in encoded)
-        width = max(d.num_options for d in decisions)
-        input_ids = torch.full((size, length), self.pad_token_id, dtype=torch.long)
-        attention = torch.zeros((size, length), dtype=torch.long)
-        has_types = any(e.token_type_ids is not None for e in encoded)
-        token_types = torch.zeros((size, length), dtype=torch.long) if has_types else None
-        spans = torch.zeros((size, width, 2), dtype=torch.long)
-        option_mask = torch.zeros((size, width), dtype=torch.bool)
-        targets = torch.zeros((size, width))
-        teacher = torch.zeros((size, width))
-        has_teacher = torch.zeros(size, dtype=torch.bool)
-        label_index = torch.full((size,), -1, dtype=torch.long)
-        for row, (decision, order, item) in enumerate(zip(decisions, orders, encoded)):
-            n = len(item.input_ids)
-            input_ids[row, :n] = torch.tensor(item.input_ids)
-            attention[row, :n] = 1
-            if token_types is not None and item.token_type_ids is not None:
-                token_types[row, :n] = torch.tensor(item.token_type_ids)
-            k = decision.num_options
-            spans[row, :k] = torch.tensor(item.option_spans)
-            option_mask[row, :k] = True
-            if decision.target is not None:
-                targets[row, :k] = torch.tensor([decision.target[i] for i in order])
-            elif decision.label_index is not None:
-                targets[row, order.index(decision.label_index)] = 1.0
-            if decision.label_index is not None:
-                label_index[row] = order.index(decision.label_index)
-            if decision.teacher is not None:
-                teacher[row, :k] = torch.tensor([decision.teacher[i] for i in order])
-                has_teacher[row] = True
-        return Batch(
-            input_ids=input_ids, attention_mask=attention, token_type_ids=token_types,
-            decision_index=torch.tensor([e.decision_index for e in encoded]),
-            prefix_end=torch.tensor([e.prefix_end for e in encoded]),
-            option_spans=spans, option_mask=option_mask,
-            num_options=torch.tensor([d.num_options for d in decisions]), targets=targets, label_index=label_index,
-            teacher=teacher, has_teacher=has_teacher,
-            weights=torch.zeros(size) if dummy else torch.ones(size),
-            indices=list(indices), ids=[d.id for d in decisions], tasks=[d.task for d in decisions],
-            families=[d.family for d in decisions], question_types=[d.question_type for d in decisions],
-            option_keys=[[d.option_keys[i] for i in o] for d, o in zip(decisions, orders)],
-        )
+        return make_batch(decisions, orders, encoded, self.pad_token_id, indices=list(indices), dummy=dummy)
+
+
+def make_batch(decisions: Sequence[Decision], orders: Sequence[Sequence[int]], encoded: Sequence[Encoded],
+               pad_token_id: int, *, indices: Sequence[int] | None = None, dummy: bool = False) -> Batch:
+    """Pad encoded prompts into a batch; targets and labels follow each prompt's option order."""
+    size, length = len(decisions), max(len(e.input_ids) for e in encoded)
+    width = max(d.num_options for d in decisions)
+    input_ids = torch.full((size, length), pad_token_id, dtype=torch.long)
+    attention = torch.zeros((size, length), dtype=torch.long)
+    has_types = any(e.token_type_ids is not None for e in encoded)
+    token_types = torch.zeros((size, length), dtype=torch.long) if has_types else None
+    spans = torch.zeros((size, width, 2), dtype=torch.long)
+    option_mask = torch.zeros((size, width), dtype=torch.bool)
+    targets = torch.zeros((size, width))
+    teacher = torch.zeros((size, width))
+    has_teacher = torch.zeros(size, dtype=torch.bool)
+    label_index = torch.full((size,), -1, dtype=torch.long)
+    for row, (decision, order, item) in enumerate(zip(decisions, orders, encoded)):
+        n = len(item.input_ids)
+        input_ids[row, :n] = torch.tensor(item.input_ids)
+        attention[row, :n] = 1
+        if token_types is not None and item.token_type_ids is not None:
+            token_types[row, :n] = torch.tensor(item.token_type_ids)
+        k = decision.num_options
+        spans[row, :k] = torch.tensor(item.option_spans)
+        option_mask[row, :k] = True
+        if decision.target is not None:
+            targets[row, :k] = torch.tensor([decision.target[i] for i in order])
+        elif decision.label_index is not None:
+            targets[row, order.index(decision.label_index)] = 1.0
+        if decision.label_index is not None:
+            label_index[row] = order.index(decision.label_index)
+        if decision.teacher is not None:
+            teacher[row, :k] = torch.tensor([decision.teacher[i] for i in order])
+            has_teacher[row] = True
+    return Batch(
+        input_ids=input_ids, attention_mask=attention, token_type_ids=token_types,
+        decision_index=torch.tensor([e.decision_index for e in encoded]),
+        prefix_end=torch.tensor([e.prefix_end for e in encoded]),
+        option_spans=spans, option_mask=option_mask,
+        num_options=torch.tensor([d.num_options for d in decisions]), targets=targets, label_index=label_index,
+        teacher=teacher, has_teacher=has_teacher,
+        weights=torch.zeros(size) if dummy else torch.ones(size),
+        indices=list(indices) if indices is not None else list(range(size)), ids=[d.id for d in decisions],
+        tasks=[d.task for d in decisions], families=[d.family for d in decisions],
+        question_types=[d.question_type for d in decisions],
+        option_keys=[[d.option_keys[i] for i in o] for d, o in zip(decisions, orders)],
+    )
 
 
 def split_micro_batches(indices: Sequence[int], lengths: Sequence[int], micro_batch_size: int,

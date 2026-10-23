@@ -86,8 +86,8 @@ def test_ddp_training_with_sharded_optimizer_and_exact_resume(model_root, data_d
             torchrun(2, "-m", "deciformer", "train", str(_yaml(config, tmp_path / f"{name}.yaml")))
         output = tmp_path / name
         assert (output / "best").exists() and (output / "summary.json").exists()
-        state = load_file(str(output / "last" / "backbone" / "model.safetensors"))
-        state.update(load_file(str(output / "last" / "heads.safetensors")))
+        state = load_file(str(output / "last" / "model.safetensors"))
+        state.update(load_file(str(output / "last" / "readout.safetensors")))
         return state
 
     plain = run("plain", [None], shard=False)

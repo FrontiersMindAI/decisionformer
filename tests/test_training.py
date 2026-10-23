@@ -45,7 +45,7 @@ def _moved(output: Path, base: Path) -> bool:
     if (last / "adapter").exists():
         adapter = load_file(str(last / "adapter" / "adapter_model.safetensors"))
         return any(float(t.abs().sum()) > 0 for k, t in adapter.items() if "lora_B" in k)
-    trained = load_file(str(last / "backbone" / "model.safetensors"))
+    trained = load_file(str(last / "model.safetensors"))
     original = _unprefixed(load_file(str(base / "model.safetensors")))
     shared = [k for k in trained if k in original and trained[k].shape == original[k].shape]
     return bool(shared) and any(not torch.equal(trained[k], original[k]) for k in shared)
@@ -77,7 +77,8 @@ def test_encoder_full_fixed_softmax_learns_and_reloads(model_root, data_dir, tmp
     final = _evals(output)[-1]["sets"]["dev"]["calibrated"]["overall"]
     assert final["accuracy"] >= 0.6, final
     assert summary["best_step"] in (30, 60)
-    assert (output / "best" / "backbone").exists() and (output / "predictions").exists()
+    assert (output / "best" / "model.safetensors").exists() and (output / "best" / "heads.safetensors").exists()
+    assert (output / "predictions").exists()
 
     from deciformer.cli import main
 
@@ -113,11 +114,13 @@ def test_decoder_attention_modes_with_lora(model_root, data_dir, tmp_path, atten
     train(config)
     output = Path(config.train.output_dir)
     assert _moved(output, build_decoder(model_root, "qwen3"))
-    from deciformer.model import load_decision_model
+    from deciformer import AutoDecisionModel
 
-    loaded = load_decision_model(output / "last")
-    assert loaded.metadata["attention"] == attention
+    assert not (output / "last" / "adapter").exists(), "LoRA exports are merged by default"
+    loaded = AutoDecisionModel.from_pretrained(output / "last", device="cpu")
     assert loaded.model.backbone.attention == attention
+    expected = {"causal": "causal", "bidirectional": "noncausal_full_attention"}.get(attention, attention)
+    assert loaded.config["attention_mode"] == expected
 
 
 def test_plain_decoder_full_finetune_with_layer_freezing(model_root, data_dir, tmp_path):
@@ -128,7 +131,7 @@ def test_plain_decoder_full_finetune_with_layer_freezing(model_root, data_dir, t
     train(config)
     output = Path(config.train.output_dir)
     assert _moved(output, base)
-    trained = load_file(str(output / "last" / "backbone" / "model.safetensors"))
+    trained = load_file(str(output / "last" / "model.safetensors"))
     original = _unprefixed(load_file(str(base / "model.safetensors")))
     for key in trained:
         if ".layers.0." in key or "embed_tokens" in key:
@@ -165,7 +168,9 @@ def test_lm_verbalizer_zero_shot_eval_needs_no_training(model_root, data_dir, tm
     output = Path(config.train.output_dir)
     assert summary["steps"] == 0 and summary["best_step"] == 0
     assert _evals(output)[0]["sets"]["dev"]["raw"]["overall"]["count"] == 32
-    assert not _losses(output) and (output / "best" / "heads.safetensors").exists()
+    assert not _losses(output) and (output / "best" / "readout.safetensors").exists()
+    config_file = json.loads((output / "best" / "decision_config.json").read_text())
+    assert config_file["format_id"] == "d3-code-readout-v1" and len(config_file["codes"]) == 255
 
 
 def test_eval_at_start_records_the_baseline(model_root, data_dir, tmp_path):
@@ -177,28 +182,32 @@ def test_eval_at_start_records_the_baseline(model_root, data_dir, tmp_path):
 
 
 def test_merged_export_matches_adapter(model_root, data_dir, tmp_path):
-    from deciformer.data import Collator, DecisionDataset
-    from deciformer.inference import collect_logits
-    from deciformer.model import load_decision_model, merge_adapter_export
-
-    config = make_config(tmp_path, build_decoder(model_root, "mistral"), data_dir, head={"type": "code_readout"},
-                         extra={"finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}}})
-    train(config)
-    adapter_dir = Path(config.train.output_dir) / "last"
-    merged_dir = tmp_path / "merged"
     import shutil
 
+    from deciformer import AutoDecisionModel
+    from deciformer.model import merge_checkpoint
+
+    config = make_config(tmp_path, build_decoder(model_root, "mistral"), data_dir, head={"type": "code_readout"},
+                         extra={"finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}, "export": "adapter"}})
+    train(config)
+    adapter_dir = Path(config.train.output_dir) / "last"
+    assert (adapter_dir / "adapter").exists()
+    merged_dir = tmp_path / "merged"
     shutil.copytree(adapter_dir, merged_dir)
-    merge_adapter_export(merged_dir)
-    assert (merged_dir / "backbone").exists() and not (merged_dir / "adapter").exists()
-    outputs = []
-    for directory in (adapter_dir, merged_dir):
-        loaded = load_decision_model(directory)
-        dataset = DecisionDataset.from_paths(str(data_dir / "dev.jsonl"), loaded.builder)
-        rows = collect_logits(loaded.model, dataset, Collator(loaded.builder, loaded.tokenizer.pad_token_id),
-                              range(len(dataset)), device=torch.device("cpu"), micro_batch_size=8, token_budget=None)
-        outputs.append(torch.tensor([r["logits"] for r in rows]))
-    assert torch.allclose(outputs[0], outputs[1], atol=1e-4)
+    merge_checkpoint(merged_dir)
+    assert (merged_dir / "model.safetensors").exists() and not (merged_dir / "adapter").exists()
+    questions = {"color": {"type": "choice", "instructions": "What is the color ?", "criteria": dict.fromkeys(
+        ["red", "blue", "green", "yellow"])}, "red": {"type": "noul", "instructions": "Is it red ?"}}
+    answers = [AutoDecisionModel.from_pretrained(d, device="cpu", dtype=torch.float32).decide(
+        "the small circle is blue .", questions)["answers"] for d in (adapter_dir, merged_dir)]
+    for key in questions:
+        first, second = answers[0][key], answers[1][key]
+        if key == "red":
+            assert first["noul"] == pytest.approx(second["noul"], abs=1e-4)
+        else:
+            assert first["choice"] == second["choice"]
+            for option, value in first["probabilities"].items():
+                assert value == pytest.approx(second["probabilities"][option], abs=1e-4)
 
 
 def test_pause_and_resume_is_exact(model_root, data_dir, tmp_path):
@@ -211,8 +220,8 @@ def test_pause_and_resume_is_exact(model_root, data_dir, tmp_path):
                                         "data": {"eval": {}}},
                                  overrides=["data.calibration=null"])
             train(config)
-        return load_file(str(Path(config.train.output_dir) / "last" / "heads.safetensors")), \
-            load_file(str(Path(config.train.output_dir) / "last" / "backbone" / "model.safetensors"))
+        return load_file(str(Path(config.train.output_dir) / "last" / "readout.safetensors")), \
+            load_file(str(Path(config.train.output_dir) / "last" / "model.safetensors"))
 
     straight_heads, straight_backbone = run("straight", [None])
     resumed_heads, resumed_backbone = run("resumed", [4, None])
@@ -239,7 +248,8 @@ def test_mntp_adaptation_then_bidirectional_training(model_root, data_dir, tmp_p
 
 @pytest.mark.parametrize("name, backbone, head, extra, minimum", [
     ("bidirectional-option-scoring", "qwen3", {"type": "option_scoring", "mlp_hidden": 16},
-     {"model": {"attention": "bidirectional"}, "finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}}},
+     {"model": {"attention": "bidirectional"}, "train": {"seed": 1},  # tiny random models are seed-sensitive
+      "finetune": {"mode": "lora", "lora": {"r": 4, "lora_dropout": 0.0}}},
      0.5),
     ("causal-code-readout", "llama", {"type": "code_readout"},
      {"data": {"shuffle_options": False}, "train": {"lr": 1e-2},

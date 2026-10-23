@@ -23,15 +23,16 @@ from deciformer.finetune import count_parameters
 from deciformer.inference import (
     autocast,
     collect_logits,
-    fit_task_temperatures,
+    fit_type_temperatures,
     grouped_metrics,
     iterate_jsonl,
     prediction_records,
     shard,
+    temperature_for,
 )
 from deciformer.losses import decision_loss
 from deciformer.metrics import is_improvement, satisfies
-from deciformer.model import BuildResult, build_model, export_model, merge_adapter_export
+from deciformer.model import BuildResult, build_model, export_checkpoint, merge_checkpoint
 from deciformer.optim import build_optimizer, lr_lambda
 
 logger = logging.getLogger("deciformer")
@@ -73,10 +74,7 @@ class Trainer:
         self.result: BuildResult = build_model(config, self.state.device, training=True)
         self.model = self.result.model
         builder = self.result.builder
-        self.train_set = DecisionDataset.from_paths(config.data.train, builder)
-        unlabeled = [d.id for d in self.train_set.decisions if d.label_index is None and d.target is None]
-        if unlabeled:
-            raise ValueError(f"Training records need a label or target; first unlabeled: {unlabeled[:3]}")
+        self.train_set = DecisionDataset.from_paths(config.data.train, builder, labeled_only=True)
         self.eval_sets = {name: DecisionDataset.from_paths(paths, builder) for name, paths in config.data.eval.items()}
         self.calibration = DecisionDataset.from_paths(config.data.calibration, builder) if config.data.calibration else None
         pad = self.result.tokenizer.pad_token_id
@@ -217,16 +215,17 @@ class Trainer:
         set_rows = {name: self._rows(dataset) for name, dataset in self.eval_sets.items()}
         report: dict[str, Any] | None = None
         if self.state.is_main:
-            temperatures = fit_task_temperatures(self.calibration, calibration_rows) if self.calibration else {}
+            temperatures = fit_type_temperatures(self.calibration, calibration_rows) if self.calibration else {}
             self.last_temperatures = temperatures
             report = {"event": "eval", "step": self.step, "temperatures": temperatures, "sets": {}}
             for name, rows in set_rows.items():
                 dataset = self.eval_sets[name]
-                raw = prediction_records(dataset, rows, lambda task: 1.0)
+                raw = prediction_records(dataset, rows, lambda decision: 1.0)
                 entry = {"raw": grouped_metrics(raw, bins=config.eval.ece_bins)}
                 records = raw
                 if temperatures:
-                    records = prediction_records(dataset, rows, lambda task: temperatures.get(task, temperatures["default"]))
+                    records = prediction_records(
+                        dataset, rows, lambda decision: temperature_for(temperatures, decision.question_type))
                     entry["calibrated"] = grouped_metrics(records, bins=config.eval.ece_bins)
                 report["sets"][name] = entry
                 if config.eval.save_predictions:
@@ -253,8 +252,8 @@ class Trainer:
             return
         if is_improvement(metrics, self.best, config.eval.selection_metric, config.eval.selection_mode):
             self.best, self.best_step, self.temperatures = metrics, self.step, temperatures
-            export_model(self.result, config, self.output / "best", temperatures=temperatures,
-                         metrics={"step": self.step, "set": set_name, "flavor": flavor, **metrics})
+            export_checkpoint(self.result, config, self.output / "best", temperatures=temperatures,
+                              metrics={"step": self.step, "set": set_name, "flavor": flavor, **metrics})
             logger.info("New best at step %d: %s=%.4f", self.step, config.eval.selection_metric,
                         metrics[config.eval.selection_metric])
 
@@ -348,19 +347,35 @@ class Trainer:
         config = self.config
         summary: dict[str, Any] = {}
         if self.state.is_main:
-            export_model(self.result, config, self.output / "last", temperatures=self.last_temperatures,
-                         metrics={"step": self.step})
+            export_checkpoint(self.result, config, self.output / "last", temperatures=self.last_temperatures,
+                              metrics={"step": self.step})
             if self.best is None and not self.eval_sets:
                 shutil.copytree(self.output / "last", self.output / "best", dirs_exist_ok=True)
             if config.finetune.export == "merged" and config.finetune.mode in ("lora", "qlora"):
-                for name in ("best", "last"):
-                    if (self.output / name).exists():
-                        merge_adapter_export(self.output / name)
-            summary = {"steps": self.step, "best_step": self.best_step, "best": self.best,
-                       "temperatures": self.temperatures, "output_dir": str(self.output)}
+                self._merge_exports()
+            summary = {"steps": self.step, "complete": self.step == self.total_steps, "best_step": self.best_step,
+                       "best": self.best, "temperatures": self.temperatures, "output_dir": str(self.output)}
+            if config.train.push_to_hub and (self.output / "best").exists():
+                from deciformer.hub import push_folder
+
+                summary["hub_url"] = push_folder(self.output / "best", config.train.push_to_hub,
+                                                 private=config.train.hub_private)
+                logger.info("Pushed the best checkpoint to %s", summary["hub_url"])
             (self.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         dist_utils.barrier()
         return summary
+
+    def _merge_exports(self) -> None:
+        """Turn LoRA exports into full weights (the standard layout). Exact merges in float32 on CPU for models
+        up to ~3B parameters; larger ones merge in bfloat16 to bound memory."""
+        size = sum(p.numel() for p in self.model.parameters())
+        dtype = torch.float32 if size < 3e9 else torch.bfloat16
+        self.model.cpu()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        for name in ("best", "last"):
+            if (self.output / name).exists():
+                merge_checkpoint(self.output / name, device="cpu", dtype=dtype)
 
 
 def train(config: RunConfig) -> dict[str, Any]:

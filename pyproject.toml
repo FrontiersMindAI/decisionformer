@@ -1,13 +1,13 @@
 [project]
 name = "deciformer"
-version = "0.1.0.dev0"
-description = "Fine-tune any Hugging Face encoder or decoder into a calibrated one-pass decision model."
+version = "0.2.0.dev0"
+description = "Train, load, serve and benchmark one-pass decision models on any Hugging Face backbone."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 authors = [{ name = "FrontiersMind AI" }]
-keywords = ["transformers", "classification", "decision", "fine-tuning", "lora", "calibration"]
+keywords = ["transformers", "decision-model", "system-one", "jev", "classification", "fine-tuning", "lora", "calibration"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -23,12 +23,15 @@ dependencies = [
   "pyyaml>=6",
   "safetensors>=0.4",
   "numpy>=1.26",
+  "huggingface_hub>=0.30",
 ]
 
 [project.optional-dependencies]
 qlora = ["bitsandbytes>=0.45"]
+serve = ["fastapi>=0.110", "uvicorn>=0.29"]
+fla = ["flash-linear-attention>=0.5"]  # fast Gated DeltaNet kernels for Qwen3.5/3.8 backbones
 data = ["datasets>=3"]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "fastapi>=0.110", "httpx>=0.27"]
 
 [project.scripts]
 deciformer = "deciformer.cli:main"

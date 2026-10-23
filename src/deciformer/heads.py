@@ -24,7 +24,7 @@ def _projection(hidden_size: int, out_features: int, mlp_hidden: int | None, dro
 
 class Head(nn.Module):
     pooler_level = "example"
-    question_types: tuple[str, ...] = ("choice", "binary", "score")
+    question_types: tuple[str, ...] = ("choice", "noul", "score")
     needs_code_tokens = False
 
     def check_rows(self, batch: Any, rows: torch.Tensor) -> None:
@@ -39,7 +39,7 @@ class Head(nn.Module):
 class FixedSoftmaxHead(Head):
     """A classifier over a fixed label set; each question's options are looked up by key."""
 
-    question_types = ("choice", "binary")
+    question_types = ("choice", "noul")
 
     def __init__(self, hidden_size: int, labels: list[str], mlp_hidden: int | None = None, dropout: float = 0.0,
                  max_options: int = 26, code_rows: torch.Tensor | None = None) -> None:
@@ -115,7 +115,7 @@ class OptionScoringHead(Head):
 class BinaryHead(Head):
     """One logit z for 'true'; returned as [0, z] so a softmax over the two options equals sigmoid(z)."""
 
-    question_types = ("binary",)
+    question_types = ("noul",)
 
     def __init__(self, hidden_size: int, mlp_hidden: int | None = None, dropout: float = 0.0,
                  max_options: int = 26, code_rows: torch.Tensor | None = None) -> None:
