@@ -97,6 +97,11 @@ class Decider:
                              "`decisionformer train`, or evaluate a stock model zero-shot with an lm_verbalizer head.")
         config = json.loads(config_file.read_text())
         ext = config.get("decisionformer") or {}
+        native_classifier = ext.get("export_format") == "sequence_classification"
+        if native_classifier:
+            from decisionformer.classifier import validate_classifier_checkpoint
+
+            validate_classifier_checkpoint(root, config)
         style = get_format(prompt or _prompt_name(config))
         device = torch.device(device) if device else pick_device()
         dtype = dtype or _default_dtype(device)
@@ -113,8 +118,20 @@ class Decider:
                                             config.get("attention_mode", "causal"), "causal"))
         model_cfg = SimpleNamespace(backbone=source, revision=model_revision, trust_remote_code=trust_remote_code,
                                     attn_implementation="sdpa", init_adapter=None)
-        hf_model, _ = load_backbone(model_cfg, None, kind=kind, attention=attention, dtype=dtype, device=device,
-                                    code_token_ids=None, source=source if not adapter else None)
+        if native_classifier:
+            from transformers import AutoModelForSequenceClassification
+
+            classifier, loading = AutoModelForSequenceClassification.from_pretrained(
+                source, dtype=dtype, attn_implementation="sdpa", trust_remote_code=trust_remote_code,
+                output_loading_info=True)
+            problems = {key: loading[key] for key in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
+                        if loading.get(key)}
+            if problems:
+                raise ValueError(f"Cannot load incomplete or incompatible native classifier weights: {problems}")
+            hf_model = classifier.model.to(device)
+        else:
+            hf_model, _ = load_backbone(model_cfg, None, kind=kind, attention=attention, dtype=dtype, device=device,
+                                        code_token_ids=None, source=source if not adapter else None)
         if adapter:
             from peft import PeftModel
 
@@ -124,10 +141,15 @@ class Decider:
         hf_model.requires_grad_(False)
         backbone = Backbone(hf_model, kind, attention)
         codes = config.get("codes") or []
-        if (root / READOUT).is_file() and not (root / HEADS).is_file():
-            from safetensors.torch import load_file
+        if native_classifier or ((root / READOUT).is_file() and not (root / HEADS).is_file()):
+            if native_classifier:
+                from decisionformer.classifier import classifier_readout
 
-            weight = load_file(str(root / READOUT))["weight"]
+                weight = classifier_readout(root)
+            else:
+                from safetensors.torch import load_file
+
+                weight = load_file(str(root / READOUT))["weight"]
             head = CodeReadoutHead(backbone.hidden_size, max_options=weight.shape[0], init_from_lm_head=False)
             head.readout.weight.data.copy_(weight.float())
             poolers = {"p0": build_pooler(PoolerConfig(type="decision_token"), backbone.hidden_size)}

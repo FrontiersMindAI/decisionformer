@@ -172,6 +172,16 @@ def _push(args: argparse.Namespace) -> None:
     print(push_folder(args.checkpoint, args.repo_id, private=not args.public))
 
 
+def _export(args: argparse.Namespace) -> None:
+    from decisionformer.classifier import export_sequence_classifier
+
+    try:
+        output = export_sequence_classifier(args.model, args.output, revision=args.revision)
+    except (ValueError, OSError) as error:
+        raise SystemExit(f"error: {error}") from None
+    print(json.dumps({"output": str(output), "format": args.format, "dtype": "float32"}, indent=2))
+
+
 def _compare(args: argparse.Namespace) -> None:
     from decisionformer.metrics import paired_bootstrap
 
@@ -279,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--backend", choices=("transformers", "vllm"), default="transformers",
-                       help="vllm: vLLM computes the readout (Qwen3.5/3.8 code-readout checkpoints only)")
+                       help="vllm: native Qwen3 classifier exports or Qwen3.5/3.8 code-readout checkpoints")
     serve.add_argument("--max-batch", type=int, default=16,
                        help="requests arriving together are answered in one batch of up to this many")
     serve.add_argument("--api-key-env", default="DECISIONFORMER_API_KEY",
@@ -291,6 +301,14 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument("repo_id")
     push.add_argument("--public", action="store_true", help="create the repo as public (default: private)")
     push.set_defaults(handler=_push)
+
+    export = commands.add_parser("export", help="Export a merged Qwen3 code-readout model as a native HF classifier")
+    export.add_argument("model", help="decision checkpoint: local directory or Hub repo id")
+    export.add_argument("output", help="new export directory (existing paths are refused)")
+    export.add_argument("--revision")
+    export.add_argument("--format", choices=("sequence-classification",), required=True,
+                        help="explicit output layout; sequence-classification exports CPU float32 weights")
+    export.set_defaults(handler=_export)
 
     compare = commands.add_parser("compare", help="Paired family bootstrap between two prediction files")
     compare.add_argument("first")
