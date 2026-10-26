@@ -38,7 +38,7 @@ Dataset = "https://huggingface.co/datasets/FrontiersMind/deciformer-15k"
 [project.optional-dependencies]
 qlora = ["bitsandbytes>=0.45"]
 serve = ["fastapi>=0.110", "uvicorn>=0.29"]
-vllm = ["fastapi>=0.110", "uvicorn>=0.29", "vllm>=0.12"]  # decision-model support: vLLM nightly from 2026-10-15
+vllm = ["fastapi>=0.110", "uvicorn>=0.29", "vllm>=0.12"]  # Decision 3.0 models need a vLLM nightly from 2026-10-15 (0.32.0 predates it)
 fla = ["flash-linear-attention>=0.5"]  # fast Gated DeltaNet kernels for Qwen3.5/3.8 backbones
 data = ["datasets>=3"]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
