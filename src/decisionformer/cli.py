@@ -279,7 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--backend", choices=("transformers", "vllm"), default="transformers",
-                       help="vllm: vLLM computes the readout (Qwen3.5/3.8 code-readout checkpoints only)")
+                       help="vllm: vLLM computes the readout (Qwen3.5 code-readout checkpoints; needs a vLLM nightly)")
     serve.add_argument("--max-batch", type=int, default=16,
                        help="requests arriving together are answered in one batch of up to this many")
     serve.add_argument("--api-key-env", default="DECISIONFORMER_API_KEY",
