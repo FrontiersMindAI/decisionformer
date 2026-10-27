@@ -136,6 +136,24 @@ pip install -U vllm --pre --extra-index-url https://wheels.vllm.ai/nightly
 decisionformer serve vllm-sr/d3-edge --backend vllm
 ```
 
+### Export a trained Qwen3 model as a native classifier
+
+A merged causal Qwen3 checkpoint with one answer-code readout can be exported to the standard
+`Qwen3ForSequenceClassification` layout. The export copies the learned answer matrix into `score.weight`,
+preserves the tokenizer and decision metadata, and leaves the source checkpoint unchanged:
+
+```bash
+decisionformer export runs/deciformer15k-qwen3-0.6b/best exports/my-classifier --format sequence-classification
+decisionformer serve exports/my-classifier                 # Transformers backend
+decisionformer serve exports/my-classifier --backend vllm  # requires a compatible vLLM runtime
+```
+
+The destination must be new. This first export path writes float32 weights, so stored 16-bit backbone weights
+approximately double in size. DecisionFormer keeps the original prompts, active-option normalization and
+per-question-type calibration. Export compatibility does not itself establish a speedup.
+See the [native classifier guide](docs/native-classifier.md) for scope, numerical checks and the reproducible
+comparison example.
+
 ## Supported backbones
 
 Every family below is fine-tuned, exported, reloaded and checked against the Decision Index's response rules in

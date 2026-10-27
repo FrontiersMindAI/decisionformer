@@ -12,6 +12,7 @@
 __version__ = "0.2.0"
 
 from decisionformer.api import AutoDecisionModel, Decider, UnsupportedInput  # noqa: E402
+from decisionformer.classifier import export_sequence_classifier  # noqa: E402
 from decisionformer.config import RunConfig, list_recipes, load_config  # noqa: E402
 from decisionformer.formats import PromptFormat, get_format, register_format  # noqa: E402
 from decisionformer.prompting import ContextLengthError  # noqa: E402
@@ -20,5 +21,6 @@ from decisionformer.trainer import train  # noqa: E402
 
 __all__ = [
     "AutoDecisionModel", "ContextLengthError", "Decider", "DecisionInputError", "PromptFormat", "RunConfig",
-    "UnsupportedInput", "__version__", "get_format", "list_recipes", "load_config", "register_format", "train",
+    "UnsupportedInput", "__version__", "export_sequence_classifier", "get_format", "list_recipes", "load_config",
+    "register_format", "train",
 ]
