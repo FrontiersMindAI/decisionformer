@@ -31,7 +31,7 @@ Optional extras, combined as `pip install "decisionformer[serve,qlora]"`:
 |---|---|
 | `serve` | the `/v1/systemone` API server (FastAPI, uvicorn) |
 | `qlora` | bitsandbytes, for QLoRA |
-| `vllm` | the vLLM serving backend (a vLLM build from 2026-10-15 or later) |
+| `vllm` | vLLM, for the vLLM serving backend; Decision 3.0 models need its nightly build (see [Serve as an API](#serve-as-an-api)) |
 | `fla` | fast Gated DeltaNet kernels for Qwen3.5 backbones |
 | `data` | datasets, for Hub datasets (`hf:` inputs) and the example converters |
 
@@ -126,10 +126,13 @@ schemas are at `/docs`. Over-long requests are refused with HTTP 422, never trun
 runs at once; requests that arrive while it is busy are answered together, up to `--max-batch` (16) at a time.
 
 For code-readout checkpoints on Qwen3.5 (the Decision 3.0 layout), vLLM can run the model behind the same API.
-Other checkpoints fail with a clear error that points to the default backend:
+This needs a vLLM nightly build from 2026-10-15 or later (vLLM 0.32.0 on PyPI predates its decision-model support)
+and a CUDA GPU, Ampere or newer for non-causal checkpoints such as `vllm-sr/d3-edge`. Other checkpoints fail with a
+clear error that points to the default backend:
 
 ```bash
-pip install "decisionformer[vllm]"
+pip install "decisionformer[serve]"
+pip install -U vllm --pre --extra-index-url https://wheels.vllm.ai/nightly
 decisionformer serve vllm-sr/d3-edge --backend vllm
 ```
 

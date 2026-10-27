@@ -3,12 +3,13 @@
 vLLM computes the answer-code logits; decisionformer renders the prompt (byte-identical to the transformers
 backend) and turns logits into answers with the checkpoint's per-type temperatures, so both backends answer the
 same way. Supported layouts are native Qwen3 sequence-classifier exports and code-readout checkpoints whose
-backbone is a bare Qwen3.5/3.8 model
+backbone is a bare Qwen3.5 model
 (`Qwen3_5Model` plus `decision_config.json` and `readout.safetensors`): decisionformer exports on those bases,
 Decision 3.0 (`vllm-sr/d3*`) and AutoJev-format exports such as FrontiersMind/Lumma-fev-27B. Anything else raises
 `UnsupportedBackend`; serve it with the default transformers backend. Native classifier exports use vLLM's
-pooling runner; the bare Qwen3.5 layout needs its D3 decision-model implementation. The installed vLLM runtime
-must support the selected layout and hardware platform.
+pooling runner; the bare Qwen3.5 layout needs vLLM's D3 decision-model implementation, in vLLM nightlies from
+2026-10-15 on (vLLM 0.32.0 on PyPI predates it). The installed vLLM runtime must support the selected layout and
+hardware platform.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ def check_vllm_support(root: Path, config: dict[str, Any]) -> None:
 
     def refuse(reason: str) -> None:
         raise UnsupportedBackend(f"vLLM cannot serve {root}: {reason}. vLLM serves code-readout decision checkpoints "
-                                 "with a bare Qwen3.5/3.8 backbone (Qwen3_5Model). Use the transformers backend "
+                                 "with a bare Qwen3.5 backbone (Qwen3_5Model). Use the transformers backend "
                                  "(the default) for this model.")
 
     if not (root / READOUT).is_file() or (root / HEADS).is_file():
