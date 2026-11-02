@@ -1,0 +1,38 @@
+# Keep fine-tuning a finished decision model on your own data: FrontiersMind/Lumma-fev-0.1B-v2.
+#   decisionformer train lumma_fev_continue data.train=my/train.jsonl data.calibration=my/calibration.jsonl \
+#       data.eval.dev=my/dev.jsonl
+# When model.backbone is a decision checkpoint, training continues from it: its answer-code readout seeds the
+# code_readout head, and its prompt format, attention mode and answer codes are kept unless set here.
+# The same recipe continues the larger v2 models:
+#   model.backbone=FrontiersMind/Lumma-fev-4B-v2 model.trust_remote_code=false finetune.mode=lora
+#   model.backbone=FrontiersMind/Lumma-fev-27B-v2 model.trust_remote_code=false finetune.mode=qlora   (needs qlora extra)
+# Both are Qwen3.5-architecture checkpoints with bidirectional attention, about 9 GB and 55 GB in bf16.
+
+model:
+  backbone: FrontiersMind/Lumma-fev-0.1B-v2
+  trust_remote_code: true       # its Nandi backbone ships its own modeling code
+  head: {type: code_readout}
+
+finetune:
+  mode: full
+  gradient_checkpointing: true
+  lora: {r: 16, lora_alpha: 32, lora_dropout: 0.05, target_modules: all-linear}   # used by lora / qlora
+
+data:
+  train: data/deciformer-15k/train.jsonl
+  calibration: data/deciformer-15k/calibration.jsonl
+  eval: {dev: data/deciformer-15k/dev.jsonl}
+
+train:
+  output_dir: runs/lumma-fev-continue
+  max_steps: 300
+  global_batch_size: 16
+  micro_batch_size: 4
+  token_budget: 4096
+  lr: 1.0e-5                    # a trained model: smaller steps than from a base model
+  head_lr: 1.0e-5
+  eval_every: 100
+  save_every: 100
+
+eval:
+  micro_batch_size: 8

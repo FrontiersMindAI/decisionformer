@@ -167,10 +167,11 @@ ModernBERT-base and T5-small; `vllm-sr/d3-edge` is loaded and served (`docs/benc
 | **Decoders, mixture of experts** | GPT-OSS, Llama 4, DeepSeek-V3, Qwen3-MoE, Granite-MoE, OLMoE, Phi-MoE, Mixtral |
 | **Decoders, hybrid linear attention** | Qwen3.5 (saved whole, with its vision tower), Qwen3-Next |
 | **Encoders** | ModernBERT, EuroBERT, DeBERTa-v3 (and v1/v2), XLM-RoBERTa, RoBERTa, ELECTRA, ALBERT, DistilBERT, BERT, T5 and mT5 (the encoder) |
+| **Custom code** (`trust_remote_code`) | FrontiersMind's Nandi (Nandi-Mini-150M) and Lumma (Lumma-0.6B-Base), and other Hub decoders that ship their own modeling code |
 
 Backbones are the architectures built into Hugging Face transformers, loaded with its `Auto` classes and saved with
-`save_pretrained`; decisionformer has no model code of its own. Hub models that need their own modeling code
-(`trust_remote_code`) are not supported. Decoders read the answer as a code token (`A`, `B`, ...) at the end of
+`save_pretrained`; decisionformer has no model code of its own. Hub models that ship their own modeling code load
+with `model.trust_remote_code: true` (see [Custom-code backbones](#custom-code-backbones)). Decoders read the answer as a code token (`A`, `B`, ...) at the end of
 the prompt, which works from step 0; encoders score each option. Encoder-decoder models without a standalone text
 encoder in transformers (BART) are refused with a clear error. Fine-tuning Qwen3.5 with the answer-code readout
 has not learned reliably in our runs yet (`docs/benchmarks.md`); loading and serving Qwen3.5 checkpoints such as
@@ -240,6 +241,48 @@ low with micro-batches of 4, at most 4,096 tokens per micro-batch and gradient c
 peaked at 3.7 GB of memory and took about 15 s per step. If memory is still tight, lower them:
 `train.micro_batch_size=2 train.token_budget=2048`. Resumable state is saved every 100 steps, and rerunning the
 same command resumes from it.
+
+### Custom-code backbones
+
+Models that ship their own modeling code, such as FrontiersMind's Nandi and Lumma, train like any other backbone once
+you allow that code to run. Review it first: it runs on your machine.
+
+```bash
+decisionformer train nandi_mini                     # FrontiersMind/Nandi-Mini-150M, full fine-tuning
+decisionformer train lumma_base                     # FrontiersMind/Lumma-0.6B-Base, LoRA
+decisionformer serve runs/nandi-mini-150m/best --trust-remote-code
+```
+
+```yaml
+model:
+  backbone: FrontiersMind/Nandi-Mini-150M   # or any Hub decoder with custom code
+  trust_remote_code: true
+  head: {type: code_readout}
+```
+
+The exported checkpoint carries the modeling and tokenizer code next to its weights, so it loads on its own with
+`from_pretrained(..., trust_remote_code=True)` or `--trust-remote-code` on `eval`, `predict` and `serve`. Backbones
+without a chat template read a plain-text prompt; `data.prompt.plain` picks its convention: `lumma` (the BOS token
+and a space, the prompt, then `Answer:`, as Nandi and Lumma models are trained) or `decisionformer` (no BOS, as for
+other plain models). The default, `auto`, uses `lumma` for Nandi and Lumma backbones, and the choice is saved in the
+checkpoint. For factorized embeddings (Nandi, Lumma), the answer-code readout starts from the LM head through its
+output projection, so it reproduces the base model's own next-token scores at step 0.
+
+### Training on from a decision model
+
+Set `model.backbone` to a finished decision checkpoint (a Lumma-fev model, a Decision 3.0 model or your own export)
+to keep training it on new data. Its answer-code readout seeds the `code_readout` head, and its prompt format,
+attention mode and answer codes carry over unless the config sets them:
+
+```bash
+decisionformer train lumma_fev_continue data.train=my/train.jsonl data.calibration=my/calibration.jsonl \
+    data.eval.dev=my/dev.jsonl                                                    # FrontiersMind/Lumma-fev-0.1B-v2
+decisionformer train lumma_fev_continue model.backbone=FrontiersMind/Lumma-fev-4B-v2 \
+    model.trust_remote_code=false finetune.mode=lora                             # Qwen3.5, bidirectional
+```
+
+Use a lower learning rate than for a base model (the recipe uses 1e-5). Checkpoints exported as LoRA adapters
+(`finetune.export: adapter`) must be merged first.
 
 ### Training data
 
@@ -386,8 +429,10 @@ Checkpoints are plain Hugging Face model repos: the backbone's `config.json` and
 `decision_config.json`, `readout.safetensors` (or `heads.safetensors` for the other heads) and a model card. In
 Python, `model.push_to_hub("my-org/my-decider")` does the same.
 
-`from_pretrained` also loads the other checkpoints of this standard, such as Decision 3.0 (`vllm-sr/d3*`) and
-AutoJev exports, with each one's own prompt, attention mode and temperatures. On `vllm-sr/d3-edge` it reproduces
+`from_pretrained` also loads the other checkpoints of this standard, such as Decision 3.0 (`vllm-sr/d3*`), AutoJev
+exports and FrontiersMind's Lumma-fev models (`Lumma-fev-4B-v2` and `-27B-v2` on Qwen3.5; `Lumma-fev-0.1B-v2` on
+its custom Nandi backbone, with `trust_remote_code=True`), with each one's own prompt, attention mode and
+temperatures. On `vllm-sr/d3-edge` it reproduces
 the checkpoint's reference runtime exactly (identical probabilities in BF16, one question per pass).
 
 Run any checkpoint through the [Decision Index](https://huggingface.co/spaces/multimodalart/jev-decision-index)
@@ -415,6 +460,12 @@ pip install -e ".[dev,data]"
 pytest -q                 # offline, tiny random models: about 2 minutes on a laptop CPU
 pytest -q -m "not slow"   # unit and attention-conformance tests only
 ruff check src tests
+
+# Real FrontiersMind checkpoints from the Hub (downloads about 2 GB; runs on a CPU). With lumma-fev installed, the
+# Lumma-fev-0.1B-v2 answers are also compared with its own runtime.
+DECISIONFORMER_HUB_TESTS=1 pytest -q tests/test_hub_models.py
+# Adds Lumma-fev-4B-v2 and -27B-v2 (about 10 GB and 55 GB; a CUDA GPU)
+DECISIONFORMER_HUB_TESTS=1 DECISIONFORMER_HUB_LARGE=1 pytest -q tests/test_hub_models.py
 ```
 
 Experimental: `decisionformer adapt` runs masked next-token prediction (as in LLM2Vec) before bidirectional

@@ -76,7 +76,8 @@ def _load(args: argparse.Namespace) -> Any:
     from decisionformer.api import Decider
 
     return Decider.from_pretrained(args.model, device=args.device, batch_size=args.batch_size,
-                                   max_length=args.max_length, revision=args.revision)
+                                   max_length=args.max_length, revision=args.revision,
+                                   trust_remote_code=args.trust_remote_code)
 
 
 def _write(lines: list[str], path: str | None) -> None:
@@ -161,7 +162,7 @@ def _serve(args: argparse.Namespace) -> None:
     try:
         serve(args.model, host=args.host, port=args.port, device=args.device, backend=args.backend,
               api_key_env=args.api_key_env, max_batch=args.max_batch, batch_size=args.batch_size,
-              max_length=args.max_length, revision=args.revision)
+              max_length=args.max_length, revision=args.revision, trust_remote_code=args.trust_remote_code)
     except UnsupportedBackend as error:
         raise SystemExit(f"error: {error}") from None
 
@@ -236,6 +237,9 @@ def _model_options(command: argparse.ArgumentParser) -> None:
     command.add_argument("--device")
     command.add_argument("--batch-size", type=int, default=16)
     command.add_argument("--max-length", type=int, help="override the input limit (default: the model's context)")
+    command.add_argument("--trust-remote-code", action="store_true",
+                         help="run the checkpoint's own modeling code (custom architectures such as Nandi or Lumma, "
+                              "e.g. FrontiersMind/Lumma-fev-0.1B-v2); review that code first")
 
 
 def build_parser() -> argparse.ArgumentParser:
