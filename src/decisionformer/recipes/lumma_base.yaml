@@ -1,0 +1,28 @@
+# Fine-tune a custom-code backbone with LoRA: FrontiersMind/Lumma-0.6B-Base on FrontiersMind/deciformer-15k.
+#   decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+#   decisionformer train lumma_base
+#   decisionformer serve runs/lumma-0.6b-base/best --trust-remote-code
+# Lumma ships its own modeling code, so model.trust_remote_code must be true; review that code before running it.
+# The LoRA adapter is merged into plain weights at the end, and the modeling code is copied next to them.
+
+model:
+  backbone: FrontiersMind/Lumma-0.6B-Base
+  trust_remote_code: true
+  head: {type: code_readout}
+
+finetune:
+  mode: lora
+  gradient_checkpointing: true
+  lora: {r: 16, lora_alpha: 32, lora_dropout: 0.05, target_modules: all-linear}
+
+data:
+  train: data/deciformer-15k/train.jsonl
+  calibration: data/deciformer-15k/calibration.jsonl
+  eval: {dev: data/deciformer-15k/dev.jsonl}
+
+train:
+  output_dir: runs/lumma-0.6b-base
+  head_lr: 1.0e-4
+  token_budget: 8192
+  eval_every: 125
+  save_every: 125

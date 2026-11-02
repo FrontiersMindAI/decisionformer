@@ -46,7 +46,7 @@ class ModelConfig(_Strict):
     backbone_type: Literal["auto", "encoder", "decoder"] = "auto"
     attention: Literal["auto", "causal", "bidirectional", "noncausal_full_attention", "prefix_bidirectional"] = "auto"
     attn_implementation: Literal["sdpa", "eager", "flash_attention_2", "flash_attention_3"] = "sdpa"
-    trust_remote_code: bool = False
+    trust_remote_code: bool = False  # run the backbone's own modeling code (Nandi, Lumma and other custom models)
     pooler: PoolerConfig = Field(default_factory=PoolerConfig)
     head: HeadConfig | None = None
     heads: dict[str, HeadConfig] = Field(default_factory=dict)
@@ -65,10 +65,16 @@ class ModelConfig(_Strict):
 
 
 class PromptConfig(_Strict):
-    """`style` names a registered prompt format (decisionformer.formats): `d3` (default, vLLM-servable) or `autojev`."""
+    """`style` names a registered prompt format (decisionformer.formats): `d3` (default, vLLM-servable) or `autojev`.
+    Continuing from a decision checkpoint, an unset `style` follows the checkpoint's own prompt.
+
+    `plain` picks how backbones without a chat template render the prompt: `decisionformer` (the system text, the
+    prompt, then "\\nAnswer:"), `lumma` (the convention of FrontiersMind's Nandi and Lumma text models: the BOS token
+    and a space, the prompt, then "\\n\\nAnswer:"), or `auto` (`lumma` for Nandi and Lumma backbones)."""
 
     style: str = "d3"
     chat_template_kwargs: dict[str, Any] = Field(default_factory=lambda: {"enable_thinking": False})
+    plain: Literal["auto", "decisionformer", "lumma"] = "auto"
 
 
 class DataConfig(_Strict):

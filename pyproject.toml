@@ -69,5 +69,6 @@ testpaths = ["tests"]
 markers = [
   "slow: end-to-end or multi-process tests",
   "gpu: requires a CUDA device",
+  "hub: downloads real checkpoints from the Hugging Face Hub (opt in with DECISIONFORMER_HUB_TESTS=1)",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]

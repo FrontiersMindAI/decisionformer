@@ -1,7 +1,8 @@
 """Load decision checkpoints and answer System One requests: `AutoDecisionModel.from_pretrained(...).decide(...)`.
 
-Any checkpoint in the shared decision layout loads here: decisionformer exports, AutoJev exports (for example
-FrontiersMind/Lumma-fev-27B) and Decision 3.0 checkpoints (`vllm-sr/d3*`). The prompt format is read from
+Any checkpoint in the shared decision layout loads here: decisionformer exports, AutoJev and Lumma-fev exports (for
+example FrontiersMind/Lumma-fev-4B-v2 and -27B-v2, and FrontiersMind/Lumma-fev-0.1B-v2 on its custom Nandi backbone
+with trust_remote_code=True) and Decision 3.0 checkpoints (`vllm-sr/d3*`). The prompt format is read from
 `decision_config.json`; checkpoints trained on other prompts need their format registered first.
 """
 
@@ -26,7 +27,7 @@ from decisionformer.formats import get_format
 from decisionformer.heads import CodeReadoutHead, build_head
 from decisionformer.model import DECISION_CONFIG, HEADS, READOUT, DecisionModel, model_card
 from decisionformer.poolers import build_pooler
-from decisionformer.prompting import ContextLengthError, Encoded, PromptBuilder, prepare_tokenizer
+from decisionformer.prompting import ContextLengthError, Encoded, PromptBuilder, plain_style, prepare_tokenizer
 from decisionformer.schema import Decision, DecisionInputError, parse_questions
 
 
@@ -106,12 +107,20 @@ class Decider:
         device = torch.device(device) if device else pick_device()
         dtype = dtype or _default_dtype(device)
         tokenizer_dir = root if (root / "tokenizer_config.json").is_file() else root / "processor"
-        tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=trust_remote_code)
-        prepare_tokenizer(tokenizer)
         adapter = ext.get("backbone") == "adapter"
         source = config.get("base_model") if adapter else str(root)
         model_revision = config.get("revision") if adapter else None
-        hf_config = AutoConfig.from_pretrained(source, revision=model_revision, trust_remote_code=trust_remote_code)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), trust_remote_code=trust_remote_code)
+            hf_config = AutoConfig.from_pretrained(source, revision=model_revision,
+                                                   trust_remote_code=trust_remote_code)
+        except ValueError as error:
+            if trust_remote_code or "trust_remote_code" not in str(error):
+                raise
+            raise ValueError(f"{name_or_path} uses its own modeling code (a custom architecture such as Nandi or "
+                             "Lumma). Review that code, then load it with trust_remote_code=True (on the command "
+                             "line: --trust-remote-code).") from error
+        prepare_tokenizer(tokenizer)
         kind = ext.get("kind") or resolve_kind(hf_config)
         attention = resolve_mode(kind, {"causal": "causal", "noncausal_full_attention": "bidirectional",
                                         "prefix_bidirectional": "prefix_bidirectional"}.get(
@@ -160,7 +169,8 @@ class Decider:
         limit = max_length or config.get("max_length") or context_limit(hf_config, tokenizer)
         builder = PromptBuilder(tokenizer, style, kind, max_length=limit, overflow="error", codes=codes,
                                 code_token_ids=config.get("token_ids") or None,
-                                chat_template_kwargs=ext.get("chat_template_kwargs"))
+                                chat_template_kwargs=ext.get("chat_template_kwargs"),
+                                plain=config.get("plain_prompt") or plain_style("auto", hf_config.model_type))
         name = ext.get("name") or display_name(name_or_path, root)
         return cls(model, builder, tokenizer, config, device=device, name=name, max_input_tokens=limit,
                    batch_size=batch_size, path=root)
