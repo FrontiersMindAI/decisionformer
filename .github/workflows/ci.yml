@@ -9,6 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false  # a failure on one Python version must not hide the other's result
       matrix:
         python: ["3.10", "3.12"]
     steps:

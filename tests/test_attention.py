@@ -18,7 +18,13 @@ LENGTH = 12
 def _load(model_root, model_type: str, implementation: str, mode: str) -> Backbone:
     from transformers import AutoModel
 
-    model = AutoModel.from_pretrained(str(build_decoder(model_root, model_type)), attn_implementation=implementation)
+    try:
+        model = AutoModel.from_pretrained(str(build_decoder(model_root, model_type)),
+                                          attn_implementation=implementation)
+    except ValueError as error:  # e.g. Gemma2 refuses SDPA from transformers 5.21; its eager cases still run
+        if "does not support an attention implementation" not in str(error):
+            raise
+        pytest.skip(f"{model_type} does not support {implementation} in this transformers version")
     model.eval()
     try:
         apply_attention_mode(model, mode)
