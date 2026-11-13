@@ -15,6 +15,11 @@ from decisionformer.schema import Decision
 MAX_CODES = 255
 _CODE_PROBE = "Choose an option."
 _PLAIN_SUFFIX = "\nAnswer:"
+_LUMMA_SUFFIX = "\n\nAnswer:"
+#: Plain-text conventions for backbones without a chat template (`data.prompt.plain`).
+PLAIN_STYLES = ("decisionformer", "lumma")
+#: config.json `model_type`s (lower-cased) of FrontiersMind's text-only models, which use the `lumma` convention.
+LUMMA_MODEL_TYPES = {"nandi", "lumma"}
 
 logger = logging.getLogger(__name__)
 
@@ -51,24 +56,49 @@ def render_mode(tokenizer: Any, kind: str) -> str:
     return "chat" if getattr(tokenizer, "chat_template", None) else "plain"
 
 
+def plain_style(requested: str, model_type: str | None) -> str:
+    """The plain-text convention to use: `requested`, or for `auto` the one the backbone family was trained with."""
+    if requested == "auto":
+        return "lumma" if str(model_type or "").lower() in LUMMA_MODEL_TYPES else "decisionformer"
+    if requested not in PLAIN_STYLES:
+        raise ValueError(f"Unknown plain prompt style {requested!r}; use one of {PLAIN_STYLES} or 'auto'")
+    return requested
+
+
 def _chat(tokenizer: Any, messages: list[dict[str, Any]], kwargs: dict[str, Any]) -> str:
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **kwargs)
 
 
+def _raw_encode(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
+    """Token ids and character offsets of `text` with no special tokens added, straight from the fast tokenizer.
+    Nandi and Lumma tokenizers prepend "<|im_start|> " in their own `encode`/`__call__`; this bypasses that, so
+    the prompt holds exactly what decisionformer wrote."""
+    backend = getattr(tokenizer, "backend_tokenizer", None)
+    if backend is None:
+        encoding = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
+        return list(encoding["input_ids"]), [tuple(o) for o in encoding["offset_mapping"]]
+    encoding = backend.encode(text, add_special_tokens=False)
+    return list(encoding.ids), [tuple(o) for o in encoding.offsets]
+
+
 def answer_codes(tokenizer: Any, mode: str, chat_template_kwargs: dict[str, Any],
-                 limit: int = MAX_CODES) -> tuple[list[str], list[int]]:
+                 limit: int = MAX_CODES, plain: str = "decisionformer") -> tuple[list[str], list[int]]:
     """Up to `limit` codes (A..Z, AA..) that are one distinct token alone and right after the answer prompt."""
     if mode == "chat":
         prefix, spacer = _chat(tokenizer, [{"role": "user", "content": _CODE_PROBE}], chat_template_kwargs), ""
     else:
-        prefix, spacer = "x" + _PLAIN_SUFFIX, " "
-    base = tokenizer.encode(prefix, add_special_tokens=False)
+        prefix, spacer = "x" + (_LUMMA_SUFFIX if plain == "lumma" else _PLAIN_SUFFIX), " "
+
+    def encode(text: str) -> list[int]:  # the fast tokenizer itself: custom `encode` overrides cannot add tokens
+        return _raw_encode(tokenizer, text)[0]
+
+    base = encode(prefix)
     codes, ids, taken = [], [], {tokenizer.unk_token_id}  # a code must never be the unknown token
     for code in candidate_codes():
-        alone = tokenizer.encode(spacer + code, add_special_tokens=False)
+        alone = encode(spacer + code)
         if len(alone) != 1 or alone[0] in taken:
             continue
-        if tokenizer.encode(prefix + spacer + code, add_special_tokens=False) != [*base, alone[0]]:
+        if encode(prefix + spacer + code) != [*base, alone[0]]:
             continue
         codes.append(code)
         ids.append(alone[0])
@@ -82,11 +112,12 @@ class PromptBuilder:
     def __init__(self, tokenizer: Any, fmt: PromptFormat | str, kind: str, *, max_length: int | None,
                  overflow: str = "error", max_options: int = MAX_CODES, need_code_tokens: bool = True,
                  chat_template_kwargs: dict[str, Any] | None = None, codes: Sequence[str] | None = None,
-                 code_token_ids: Sequence[int] | None = None) -> None:
+                 code_token_ids: Sequence[int] | None = None, plain: str = "decisionformer") -> None:
         self.tokenizer = tokenizer
         self.format = get_format(fmt) if isinstance(fmt, str) else fmt
         self.kind = kind
         self.mode = render_mode(tokenizer, kind)
+        self.plain = plain_style(plain, None)
         self.max_length = max_length
         self.overflow = overflow
         self.chat_template_kwargs = dict(chat_template_kwargs if chat_template_kwargs is not None
@@ -105,7 +136,7 @@ class PromptBuilder:
             if self.mode == "pair":
                 raise ValueError("Code-token heads need a decoder backbone")
             self.codes, self.code_token_ids = answer_codes(tokenizer, self.mode, self.chat_template_kwargs,
-                                                           max_options)
+                                                           max_options, plain=self.plain)
             if len(self.codes) < 2:
                 raise ValueError("The tokenizer has fewer than two single-token answer codes; use a head that "
                                  "does not read code tokens (option_scoring, fixed_softmax, binary, ordinal)")
@@ -115,6 +146,11 @@ class PromptBuilder:
                                len(self.codes), max_options)
         else:
             self.codes, self.code_token_ids = candidate_codes()[:max_options], None
+
+    @property
+    def lumma_plain(self) -> bool:
+        """Plain-text rendering in the Nandi/Lumma convention (no chat template)."""
+        return self.mode == "plain" and self.plain == "lumma"
 
     def encode(self, decision: Decision, order: Sequence[int] | None = None,
                max_length: int | None = None) -> Encoded:
@@ -132,7 +168,8 @@ class PromptBuilder:
             if self.overflow == "error":
                 raise ContextLengthError(f"question {decision.question.key!r} needs {len(encoded.input_ids)} tokens, "
                                          f"over the maximum context length of {limit} tokens")
-            state_ids = self.tokenizer(describe(state), add_special_tokens=False)["input_ids"]
+            state_ids = (_raw_encode(self.tokenizer, describe(state))[0] if self.lumma_plain
+                         else self.tokenizer(describe(state), add_special_tokens=False)["input_ids"])
             keep = len(state_ids) - excess - 2
             if keep <= 0:
                 raise ContextLengthError("the prompt without its state exceeds the maximum context length")
@@ -164,11 +201,16 @@ class PromptBuilder:
             if start < 0:
                 raise ValueError("The chat template changed the user message; decisionformer cannot locate option spans")
             encoding = self.tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
+            ids, offsets = list(encoding["input_ids"]), [tuple(o) for o in encoding["offset_mapping"]]
+        elif self.lumma_plain:  # "<bos> " + system + prompt + "\n\nAnswer:", as FrontiersMind's text models read it
+            bos = self.tokenizer.bos_token
+            lead = f"{bos} " if bos else ""
+            start = len(lead)
+            ids, offsets = _raw_encode(self.tokenizer, lead + user + _LUMMA_SUFFIX)
         else:
             text, start = user + _PLAIN_SUFFIX, 0
             encoding = self.tokenizer(text, add_special_tokens=True, return_offsets_mapping=True)
-        ids = list(encoding["input_ids"])
-        offsets = [tuple(o) for o in encoding["offset_mapping"]]
+            ids, offsets = list(encoding["input_ids"]), [tuple(o) for o in encoding["offset_mapping"]]
         option_spans = [_token_span(offsets, start + s, start + e, None, None) for s, e in spans]
         user_end = start + len(user)
         prefix_end = 1 + max(i for i, (s, e) in enumerate(offsets) if e > s and e <= user_end)

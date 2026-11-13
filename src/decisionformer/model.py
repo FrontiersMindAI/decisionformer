@@ -36,7 +36,7 @@ from decisionformer.finetune import (
 from decisionformer.heads import CodeReadoutHead, Head, build_head, head_class
 from decisionformer.losses import MASK_VALUE, masked_logits
 from decisionformer.poolers import Pooler, build_pooler, default_pooler_type
-from decisionformer.prompting import PromptBuilder, prepare_tokenizer
+from decisionformer.prompting import PromptBuilder, plain_style, prepare_tokenizer
 
 logger = logging.getLogger(__name__)
 DECISION_CONFIG = "decision_config.json"
@@ -132,31 +132,83 @@ def assemble(config: RunConfig, backbone: Backbone, kind: str, attention: str, c
     return DecisionModel(backbone, poolers, heads, head_poolers), pooler_configs
 
 
+def read_decision_config(source: str, revision: str | None = None) -> dict[str, Any] | None:
+    """A checkpoint's decision_config.json (local directory or Hub repo), or None when it is a plain model."""
+    from transformers.utils import cached_file
+
+    path = cached_file(source, DECISION_CONFIG, revision=revision, _raise_exceptions_for_missing_entries=False,
+                       _raise_exceptions_for_connection_errors=False)
+    return json.loads(Path(path).read_text()) if path else None
+
+
+def initial_readout(saved: dict[str, Any], config: RunConfig) -> torch.Tensor | None:
+    """The answer-code readout of the decision checkpoint training continues from, when the run trains one
+    code_readout head (the standard layout). Other heads start fresh on the checkpoint's backbone."""
+    from safetensors.torch import load_file
+    from transformers.utils import cached_file
+
+    model_cfg = config.model
+    if (saved.get("decisionformer") or {}).get("backbone") == "adapter":
+        raise ValueError(f"{model_cfg.backbone} is a LoRA adapter checkpoint; continue from a merged checkpoint "
+                         "(finetune.export: merged, the default) or from its base model with model.init_adapter")
+    single_readout = list(model_cfg.heads) == ["default"] and model_cfg.heads["default"].type == "code_readout"
+    path = cached_file(model_cfg.backbone, READOUT, revision=model_cfg.revision,
+                       _raise_exceptions_for_missing_entries=False)
+    if not single_readout or not path or not saved.get("codes"):
+        logger.warning("%s is a decision checkpoint, but its heads are not reused (the run trains %s): the heads "
+                       "start fresh on its backbone", model_cfg.backbone,
+                       ", ".join(f"{k}={v.type}" for k, v in model_cfg.heads.items()))
+        return None
+    return load_file(path)["weight"].float()
+
+
 def build_model(config: RunConfig, device: torch.device, *, training: bool = True,
                 backbone_source: str | None = None, tokenizer: Any = None) -> BuildResult:
     from transformers import AutoConfig
 
-    model_cfg, finetune = config.model, config.finetune
+    model_cfg, finetune, prompt = config.model, config.finetune, config.data.prompt
     hf_config = AutoConfig.from_pretrained(backbone_source or model_cfg.backbone,
                                            revision=None if backbone_source else model_cfg.revision,
                                            trust_remote_code=model_cfg.trust_remote_code)
     kind = resolve_kind(hf_config, model_cfg.backbone_type)
-    attention = resolve_mode(kind, model_cfg.attention)
+    # Continuing from a decision checkpoint (Lumma-fev, Decision 3.0, a decisionformer export): unset prompt and
+    # attention settings follow the checkpoint, and its answer-code readout seeds the code_readout head.
+    saved = None if backbone_source else read_decision_config(model_cfg.backbone, model_cfg.revision)
+    readout = initial_readout(saved, config) if saved else None
+    attention = resolve_mode(kind, saved.get("attention_mode", "causal") if saved and model_cfg.attention == "auto"
+                             else model_cfg.attention)
+    style, chat_kwargs, plain = prompt.style, prompt.chat_template_kwargs, prompt.plain
+    if saved:
+        from decisionformer.api import _prompt_name
+
+        ext = saved.get("decisionformer") or {}
+        style = style if "style" in prompt.model_fields_set else _prompt_name(saved)
+        if "chat_template_kwargs" not in prompt.model_fields_set and ext.get("chat_template_kwargs") is not None:
+            chat_kwargs = ext["chat_template_kwargs"]
+        plain = saved.get("plain_prompt", plain) if plain == "auto" else plain
+        logger.info("Continuing from decision checkpoint %s: prompt %s, attention %s%s", model_cfg.backbone, style,
+                    attention, ", answer-code readout loaded" if readout is not None else "")
     if tokenizer is None:
         tokenizer = load_tokenizer(model_cfg.backbone, model_cfg.revision, model_cfg.trust_remote_code)
     prepare_tokenizer(tokenizer)
     need_codes = any(head_class(h).needs_code_tokens for h in model_cfg.heads.values())
-    builder = PromptBuilder(tokenizer, config.data.prompt.style, kind, max_length=config.data.max_length,
+    builder = PromptBuilder(tokenizer, style, kind, max_length=config.data.max_length,
                             overflow=config.data.overflow, max_options=config.data.max_options,
-                            need_code_tokens=need_codes, chat_template_kwargs=config.data.prompt.chat_template_kwargs)
+                            need_code_tokens=need_codes, chat_template_kwargs=chat_kwargs,
+                            plain=plain_style(plain, hf_config.model_type),
+                            codes=saved["codes"] if readout is not None else None,
+                            code_token_ids=saved.get("token_ids") if readout is not None else None)
     dtype = resolve_dtype(finetune, effective_precision(config.train.mixed_precision, device))
     hf_model, code_rows = load_backbone(model_cfg, finetune if training else None, kind=kind, attention=attention,
                                         dtype=dtype, device=device,
-                                        code_token_ids=builder.code_token_ids if need_codes else None,
-                                        source=backbone_source)
+                                        code_token_ids=builder.code_token_ids if need_codes and readout is None
+                                        else None, source=backbone_source)
     hf_model = prepare_for_finetuning(hf_model, finetune, added_token_ids=[]) if training else hf_model.requires_grad_(False)
     backbone = Backbone(hf_model, kind, attention)
     model, pooler_configs = assemble(config, backbone, kind, attention, code_rows, len(builder.codes))
+    if readout is not None:
+        with torch.no_grad():
+            model.heads["default"].readout.weight.copy_(readout[:len(builder.codes)])
     if finetune.mode == "qlora" and training:
         model.poolers.to(device)
         model.heads.to(device)
@@ -183,10 +235,13 @@ def decision_config(result: BuildResult, config: RunConfig, *, temperatures: dic
     }
     if by_type:
         payload["temperature_by_type"] = by_type
+    if builder.mode == "plain":
+        payload["plain_prompt"] = builder.plain
     payload["decisionformer"] = {
         "version": __version__, "kind": result.kind, "backbone": backbone_kind,
         "model_type": unwrap_peft(model.backbone.model).config.model_type,
-        "chat_template_kwargs": config.data.prompt.chat_template_kwargs,
+        "trust_remote_code": config.model.trust_remote_code,
+        "chat_template_kwargs": builder.chat_template_kwargs,
         "heads": {name: cfg.model_dump(mode="json", exclude_none=True) for name, cfg in config.model.heads.items()},
         "poolers": {key: cfg.model_dump(mode="json") for key, cfg in result.pooler_configs.items()},
         "head_poolers": model.head_poolers, "metrics": metrics or {},
@@ -218,6 +273,8 @@ def export_checkpoint(result: BuildResult, config: RunConfig, directory: str | P
             _record_dtype(tmp / "config.json", target)
         backbone_kind = "full"
     result.tokenizer.save_pretrained(str(tmp))
+    if config.model.trust_remote_code:
+        copy_remote_code(tmp, config.model.backbone, config.model.revision)
     if model.readout_only():
         save_file({"weight": model.heads["default"].readout.weight.detach().float().cpu().contiguous()},
                   str(tmp / READOUT))
@@ -233,6 +290,39 @@ def export_checkpoint(result: BuildResult, config: RunConfig, directory: str | P
         shutil.rmtree(out)
     tmp.rename(out)
     return out
+
+
+def copy_remote_code(directory: Path, source: str, revision: str | None = None) -> None:
+    """Make a saved custom-code model (Nandi, Lumma, ...) loadable on its own: keep the `auto_map` entries of the
+    source's config.json and tokenizer_config.json, and copy the Python files they name next to the weights."""
+    from transformers.utils import cached_file
+
+    def fetch(filename: str) -> str | None:
+        return cached_file(source, filename, revision=revision, _raise_exceptions_for_missing_entries=False)
+
+    modules: set[str] = set()
+    for name in ("config.json", "tokenizer_config.json"):
+        saved_path, origin = directory / name, fetch(name)
+        if not saved_path.is_file() or not origin:
+            continue
+        saved, original = json.loads(saved_path.read_text()), json.loads(Path(origin).read_text())
+        auto_map = saved.get("auto_map") or original.get("auto_map")
+        if not auto_map:
+            continue
+        if "auto_map" not in saved:
+            saved["auto_map"] = auto_map
+            saved_path.write_text(json.dumps(saved, indent=2, sort_keys=True) + "\n")
+        for value in auto_map.values():
+            for reference in value if isinstance(value, list) else [value]:
+                if reference:  # "module.Class", or "repo--module.Class" for code that lives in another repo
+                    modules.add(reference.split("--")[-1].rsplit(".", 1)[0])
+    for module in sorted(modules):
+        target = directory / f"{module}.py"
+        if not target.exists():
+            origin = fetch(f"{module}.py")
+            if origin is None:
+                raise FileNotFoundError(f"{source} names {module}.py in its auto_map, but the file is missing")
+            shutil.copyfile(origin, target)
 
 
 def export_dtype(config: RunConfig) -> torch.dtype | None:
@@ -287,14 +377,18 @@ def merge_checkpoint(directory: str | Path, *, device: str | torch.device = "cpu
     payload = json.loads((out / DECISION_CONFIG).read_text())
     if payload["decisionformer"]["backbone"] != "adapter":
         return
-    decider = Decider.from_pretrained(out, device=device, dtype=dtype, merge=False)
+    # The run that wrote this adapter already chose to run the backbone's own code; merging reuses that choice.
+    remote = bool(payload["decisionformer"].get("trust_remote_code"))
+    decider = Decider.from_pretrained(out, device=device, dtype=dtype, merge=False, trust_remote_code=remote)
     peft_model = decider.model.backbone.model
     if not isinstance(peft_model, PeftModel):
         raise ValueError("Expected a peft adapter checkpoint")
     merged = peft_model.merge_and_unload()
     # Saved in `save_dtype`, else the base checkpoint's own dtype (bf16 for most current models), not the merge dtype.
-    merged.to(save_dtype or saved_dtype(payload["base_model"], payload.get("revision")) or dtype)
+    merged.to(save_dtype or saved_dtype(payload["base_model"], payload.get("revision"), remote) or dtype)
     merged.save_pretrained(str(out), safe_serialization=True)
+    if remote:
+        copy_remote_code(out, payload["base_model"], payload.get("revision"))
     shutil.rmtree(out / "adapter")
     payload["decisionformer"]["backbone"] = "full"
     (out / DECISION_CONFIG).write_text(json.dumps(payload, indent=2) + "\n")
@@ -322,12 +416,16 @@ def model_card(payload: dict[str, Any], config: RunConfig | None = None) -> str:
         shown = {k: metrics[k] for k in ("accuracy", "ece", "brier", "nll", "count") if k in metrics}
         lines.append("| validation | " + ", ".join(f"{k} {v:.4f}" if isinstance(v, float) else f"{k} {v}"
                                                   for k, v in shown.items()) + " |")
+    remote = bool(ext.get("trust_remote_code"))
     lines += ["", "## Use", "", "```python", "from decisionformer import AutoDecisionModel", "",
-              'model = AutoDecisionModel.from_pretrained("<this repo>")',
+              f'model = AutoDecisionModel.from_pretrained("<this repo>"{", trust_remote_code=True" if remote else ""})',
               'model.decide("My card was charged twice.", {',
               '    "team": {"type": "choice", "criteria": {"billing": None, "shipping": None}},',
               '    "urgent": {"type": "noul", "instructions": "Does this need a reply within the hour?"},', "})",
-              "```", "", "Serve it on `/v1/systemone`: `decisionformer serve <this repo>`."]
+              "```", "", "Serve it on `/v1/systemone`: `decisionformer serve <this repo>"
+              f"{' --trust-remote-code' if remote else ''}`."]
+    if remote:
+        lines += ["", "The backbone runs its own modeling code, shipped in this repository (`trust_remote_code`)."]
     if servable:
         lines += ["", "This checkpoint follows the Decision 3.0 code-readout contract on a Qwen3.5 backbone, so vLLM "
                       "(builds from 2026-10-15 on) can compute it too: `decisionformer serve <this repo> --backend "

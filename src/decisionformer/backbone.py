@@ -80,36 +80,61 @@ def _tied(config: Any) -> bool:
     return any(getattr(c, "tie_word_embeddings", False) for c in (config, getattr(config, "text_config", None)) if c)
 
 
-def output_rows(model: nn.Module, source: str, revision: str | None, token_ids: list[int]) -> torch.Tensor:
-    """The LM-head rows of `token_ids`: tied input embeddings, or read straight from the checkpoint files."""
-    if _tied(model.config):
-        return model.get_input_embeddings().weight[token_ids].detach().float().cpu().clone()
+def _checkpoint_tensor(source: str, revision: str | None, wanted: Any) -> tuple[str, str] | None:
+    """(file, key) of the first tensor in a checkpoint's safetensors whose key satisfies `wanted`, or None."""
     from safetensors import safe_open
     from transformers.utils import cached_file
 
     def fetch(filename: str) -> str | None:
         return cached_file(source, filename, revision=revision, _raise_exceptions_for_missing_entries=False)
 
-    def is_head(key: str) -> bool:
-        return key == "lm_head.weight" or key.endswith(".lm_head.weight")
-
     index = fetch("model.safetensors.index.json")
     if index:
         weight_map = json.loads(Path(index).read_text())["weight_map"]
-        key = next((k for k in weight_map if is_head(k)), None)
+        key = next((k for k in weight_map if wanted(k)), None)
         path = fetch(weight_map[key]) if key else None
     else:
         path = fetch("model.safetensors")
         key = None
         if path:
             with safe_open(path, "pt") as handle:
-                key = next((k for k in handle.keys() if is_head(k)), None)  # noqa: SIM118
-    if not path or not key:
-        raise ValueError(f"{source} has no LM head to initialize answer codes from; use a head that does not need "
-                         "it (option_scoring, fixed_softmax, binary, ordinal)")
-    with safe_open(path, "pt") as handle:
-        rows = handle.get_slice(key)
-        return torch.stack([rows[i:i + 1][0] for i in token_ids]).float()
+                key = next((k for k in handle.keys() if wanted(k)), None)  # noqa: SIM118
+    return (path, key) if path and key else None
+
+
+def output_rows(model: nn.Module, source: str, revision: str | None, token_ids: list[int]) -> torch.Tensor:
+    """The LM-head rows of `token_ids`: tied input embeddings, or read straight from the checkpoint files.
+
+    Factorized embeddings (Nandi, Lumma: vocabulary -> rank -> hidden) score tokens as `lm_head(lm_head_proj(h))`,
+    so a token's row in hidden space is its rank-sized row times the `lm_head_proj` weight."""
+    from safetensors import safe_open
+
+    if _tied(model.config):
+        rows = model.get_input_embeddings().weight[token_ids].detach().float().cpu().clone()
+    else:
+        found = _checkpoint_tensor(source, revision,
+                                   lambda key: key == "lm_head.weight" or key.endswith(".lm_head.weight"))
+        if found is None:
+            raise ValueError(f"{source} has no LM head to initialize answer codes from; use a head that does not "
+                             "need it (option_scoring, fixed_softmax, binary, ordinal)")
+        with safe_open(found[0], "pt") as handle:
+            head = handle.get_slice(found[1])
+            rows = torch.stack([head[i:i + 1][0] for i in token_ids]).float()
+    hidden = hidden_size_of(model.config)
+    if rows.shape[1] == hidden:
+        return rows
+    found = _checkpoint_tensor(source, revision,
+                               lambda key: key.endswith("lm_head_proj.weight") or key.endswith("output_proj.weight"))
+    if found is None:
+        raise ValueError(f"{source}: the LM head rows have {rows.shape[1]} dimensions, not the hidden size {hidden}, "
+                         "and no output projection (lm_head_proj) was found; set `init_from_lm_head: false` on the "
+                         "code_readout head")
+    with safe_open(found[0], "pt") as handle:
+        projection = handle.get_tensor(found[1]).float()
+    if tuple(projection.shape) != (rows.shape[1], hidden):
+        raise ValueError(f"{source}: {found[1]} has shape {tuple(projection.shape)}, expected "
+                         f"{(rows.shape[1], hidden)}")
+    return rows @ projection
 
 
 def load_backbone(model_cfg: Any, finetune_cfg: Any, *, kind: str, attention: str, dtype: torch.dtype,

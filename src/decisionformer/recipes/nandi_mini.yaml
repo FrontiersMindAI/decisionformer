@@ -1,0 +1,37 @@
+# Fine-tune a custom-code backbone: FrontiersMind/Nandi-Mini-150M (English + Indic) on FrontiersMind/deciformer-15k.
+#   decisionformer data split hf:FrontiersMind/deciformer-15k:train --out data/deciformer-15k
+#   decisionformer train nandi_mini
+#   decisionformer serve runs/nandi-mini-150m/best --trust-remote-code
+# Nandi ships its own modeling code, so model.trust_remote_code must be true; review that code before running it.
+# The prompt follows the Nandi/Lumma plain-text convention (data.prompt.plain: auto), and the answer-code readout
+# starts from the LM head through the factorized embedding projection. Any other custom-code decoder works the same
+# way: set model.backbone and keep trust_remote_code: true.
+
+model:
+  backbone: FrontiersMind/Nandi-Mini-150M
+  trust_remote_code: true
+  head: {type: code_readout}
+
+finetune:
+  mode: full
+  gradient_checkpointing: true
+
+data:
+  train: data/deciformer-15k/train.jsonl
+  calibration: data/deciformer-15k/calibration.jsonl
+  eval: {dev: data/deciformer-15k/dev.jsonl}
+  max_length: 1024
+
+train:
+  output_dir: runs/nandi-mini-150m
+  max_steps: 300
+  global_batch_size: 16
+  micro_batch_size: 4
+  token_budget: 4096
+  lr: 5.0e-5
+  head_lr: 1.0e-4
+  eval_every: 100
+  save_every: 100
+
+eval:
+  micro_batch_size: 8
